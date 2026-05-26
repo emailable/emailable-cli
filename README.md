@@ -11,27 +11,90 @@ See the [CLI docs](https://emailable.com/docs/api/?code_language=cli).
 
 ## Installation
 
-### Homebrew
+### Quick install
+
+**macOS, Linux, WSL2:**
+
+```bash
+curl -fsSL https://emailable.com/install-cli | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://emailable.com/install-cli.ps1 | iex
+```
+
+Both scripts pick the right archive for your OS/arch, verify it against the
+published `checksums.txt`, and install the binary (plus bundled man pages on
+Unix). Override the version with `EMAILABLE_VERSION=v0.2.0` or the install
+prefix with `EMAILABLE_PREFIX=$HOME/.local`.
+
+### Package managers
+
+**Homebrew (macOS):**
 
 ```bash
 brew install emailable/tap/emailable
 ```
 
-### Prebuilt binaries
+**Scoop (Windows):**
 
-Download the archive for your OS and architecture from the
-[releases page](https://github.com/emailable/emailable-cli/releases), extract
-it, and put the binary somewhere on your `PATH`.
+```powershell
+scoop bucket add emailable https://github.com/emailable/scoop-bucket
+scoop install emailable
+```
+
+In each snippet below, set `ver`/`arch` to the release you want (use
+`arch=arm64` on ARM). The `checksums.txt` step verifies the download before
+installing — these are GitHub-hosted artifacts, not served from a signed repo.
+
+**Debian / Ubuntu:**
 
 ```bash
-tar -xzf emailable_<version>_<os>_<arch>.tar.gz
-mv emailable /usr/local/bin/
+ver=<version> arch=amd64
+base="https://github.com/emailable/emailable-cli/releases/download/v$ver"
+curl -fsSLO "$base/emailable_${ver}_linux_$arch.deb"
+curl -fsSL "$base/checksums.txt" | sha256sum -c --ignore-missing
+sudo apt install "./emailable_${ver}_linux_$arch.deb"
+```
+
+**Fedora / RHEL:**
+
+```bash
+ver=<version> arch=amd64
+base="https://github.com/emailable/emailable-cli/releases/download/v$ver"
+curl -fsSLO "$base/emailable_${ver}_linux_$arch.rpm"
+curl -fsSL "$base/checksums.txt" | sha256sum -c --ignore-missing
+sudo dnf install "./emailable_${ver}_linux_$arch.rpm"
+```
+
+**Alpine:**
+
+```bash
+ver=<version> arch=amd64
+base="https://github.com/emailable/emailable-cli/releases/download/v$ver"
+curl -fsSLO "$base/emailable_${ver}_linux_$arch.apk"
+curl -fsSL "$base/checksums.txt" | sha256sum -c --ignore-missing
+sudo apk add --allow-untrusted "./emailable_${ver}_linux_$arch.apk"
 ```
 
 ### From source
 
 ```bash
 go install github.com/emailable/emailable-cli@latest
+```
+
+### Prebuilt binaries
+
+Download the archive for your OS and architecture from the
+[releases page](https://github.com/emailable/emailable-cli/releases), verify it
+against `checksums.txt`, extract, and drop the binary on your `PATH`:
+
+```bash
+tar -xzf emailable_<version>_<os>_<arch>.tar.gz
+sha256sum -c checksums.txt --ignore-missing
+mv emailable /usr/local/bin/
 ```
 
 ## Usage

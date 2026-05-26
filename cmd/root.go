@@ -59,9 +59,14 @@ const (
 // versionDisplay returns the multi-line version blurb used by both `--version`
 // and the `version` subcommand.
 func versionDisplay() string {
+	// Use the resolved version (collectVersionInfo falls back to the Go
+	// toolchain's module version for `go install` builds where ldflags
+	// weren't injected).
+	v := collectVersionInfo().Version
+
 	var b strings.Builder
 	b.WriteString("emailable version ")
-	b.WriteString(version)
+	b.WriteString(v)
 
 	if extras := versionExtras(); extras != "" {
 		b.WriteString(" (")
@@ -75,8 +80,8 @@ func versionDisplay() string {
 		b.WriteString("]")
 	}
 
-	if version != "" && version != "dev" {
-		tag := version
+	if v != "" && v != "dev" {
+		tag := v
 		if !strings.HasPrefix(tag, "v") {
 			tag = "v" + tag
 		}
@@ -106,9 +111,11 @@ func collectVersionInfo() versionInfo {
 	if !ok {
 		return vi
 	}
+	fromVCS := false
 	for _, s := range info.Settings {
 		switch s.Key {
 		case "vcs.revision":
+			fromVCS = true
 			if len(s.Value) > 7 {
 				vi.Commit = s.Value[:7]
 			} else {
@@ -123,6 +130,15 @@ func collectVersionInfo() versionInfo {
 		case "vcs.modified":
 			vi.Dirty = s.Value == "true"
 		}
+	}
+	// `go install module@vX.Y.Z` injects no ldflags and builds from the module
+	// cache (no vcs.* settings), so the package-level `version` is still "dev".
+	// Fall back to the toolchain-recorded module version there. A local checkout
+	// always carries VCS info — its Main.Version is an untagged pseudo-version,
+	// not a real release, so leave it as "dev" rather than print a 404 tag URL.
+	if !fromVCS && (vi.Version == "" || vi.Version == "dev") &&
+		info.Main.Version != "" && info.Main.Version != "(devel)" {
+		vi.Version = strings.TrimPrefix(info.Main.Version, "v")
 	}
 	return vi
 }
