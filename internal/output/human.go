@@ -201,8 +201,7 @@ func hyperlink(url, text string, enabled bool) string {
 }
 
 // isTTY reports whether w is a terminal AND ANSI styling is enabled. Delegates
-// to ui.IsTTY so the NO_COLOR env var and the --no-color flag (via
-// ui.SetNoColor) both suppress styling here too.
+// to ui.IsTTY so the NO_COLOR env var suppresses styling here too.
 func isTTY(w io.Writer) bool {
 	return ui.IsTTY(w)
 }

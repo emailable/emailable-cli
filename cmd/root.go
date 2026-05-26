@@ -52,12 +52,6 @@ var debugMode bool
 // modifier). Mirrors the convention in curl, docker, gh.
 var quietMode bool
 
-// noColor is the value of the persistent --no-color flag. When true (or when
-// NO_COLOR is set non-empty) ANSI escape codes are suppressed even on a real
-// TTY. The flag's effect is plumbed into internal/ui via ui.SetNoColor so a
-// single decision point feeds both the env-var path and the explicit flag.
-var noColor bool
-
 // Command group IDs. Used both by cobra's command grouping and by the custom
 // help renderer to emit gh-style section headers in a stable order.
 const (
@@ -210,15 +204,6 @@ func newRootCmd(v string) *cobra.Command {
 			if !cmd.Flags().Changed("json") && strings.EqualFold(os.Getenv(outputEnv), "json") {
 				jsonOutput = true
 			}
-			// Propagate --no-color into the ui package so every IsTTY check
-			// in the process honors it. The env var NO_COLOR is consulted
-			// independently inside ui.IsTTY, so we only force-on when the
-			// flag was explicitly set — letting the env-var convention
-			// remain the default mechanism. (Mirrors how --debug interacts
-			// with EMAILABLE_DEBUG: explicit flag is just an alternative.)
-			if cmd.Flags().Changed("no-color") {
-				ui.SetNoColor(noColor)
-			}
 			return nil
 		},
 	}
@@ -229,7 +214,6 @@ func newRootCmd(v string) *cobra.Command {
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Return JSON response")
 	root.PersistentFlags().BoolVar(&debugMode, "debug", false, "Dump HTTP requests/responses to stderr (also EMAILABLE_DEBUG)")
 	root.PersistentFlags().BoolVarP(&quietMode, "quiet", "q", false, "Suppress non-error human output (success lines, hints, progress)")
-	root.PersistentFlags().BoolVar(&noColor, "no-color", false, "Disable ANSI colors (also NO_COLOR)")
 
 	// Register groups so cobra knows about them; the custom usage func is
 	// what actually renders them under gh-style headings.
