@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/emailable/emailable-cli/internal/config"
+	"github.com/emailable/emailable-cli/internal/credentials"
 )
 
 // testEnv configures a hermetic per-test environment:
@@ -15,16 +15,16 @@ import (
 //   - Spins up an httptest.Server with the supplied handler. The server's URL
 //     is exported via EMAILABLE_API_URL/EMAILABLE_OAUTH_URL so cmd code paths
 //     that resolve env.Current() pick it up.
-//   - Points XDG_CONFIG_HOME at a temp dir so config.DefaultPath writes inside
-//     the test sandbox.
-//   - chdir's into a fresh empty temp dir so any project-local .emailable.yml
+//   - Points XDG_CONFIG_HOME at a temp dir so credentials.DefaultPath writes
+//     inside the test sandbox.
+//   - chdir's into a fresh empty temp dir so any project-local .emailable/config.json
 //     in the repo doesn't bleed into env.Current().
 //
-// The server, the config path, and the temp config dir are returned. Cleanup
-// (server shutdown, env restoration, chdir restoration) is registered on t.
+// The server and the credentials path are returned. Cleanup (server shutdown,
+// env restoration, chdir restoration) is registered on t.
 type testEnv struct {
-	Server     *httptest.Server
-	ConfigPath string
+	Server          *httptest.Server
+	CredentialsPath string
 }
 
 // newTestEnv builds a testEnv. handler is the response policy for the test
@@ -61,21 +61,21 @@ func newTestEnv(t *testing.T, handler http.Handler) *testEnv {
 	t.Cleanup(func() { quietMode = prevQuiet })
 
 	// env.Current() returns "custom" when EMAILABLE_API_URL is set.
-	path, err := config.DefaultPath("custom")
+	path, err := credentials.DefaultPath("custom")
 	if err != nil {
 		t.Fatalf("DefaultPath: %v", err)
 	}
 
-	return &testEnv{Server: srv, ConfigPath: path}
+	return &testEnv{Server: srv, CredentialsPath: path}
 }
 
-// seedAPIKey writes an API key into the active test config so cmds appear
-// "logged in" without going through the OAuth path.
+// seedAPIKey writes an API key into the active test credentials file so cmds
+// appear "logged in" without going through the OAuth path.
 func (e *testEnv) seedAPIKey(t *testing.T, key string) {
 	t.Helper()
-	cfg := &config.Config{APIKey: key}
-	if err := cfg.Save(e.ConfigPath); err != nil {
-		t.Fatalf("seed config: %v", err)
+	creds := &credentials.Credentials{APIKey: key}
+	if err := creds.Save(e.CredentialsPath); err != nil {
+		t.Fatalf("seed credentials: %v", err)
 	}
 }
 

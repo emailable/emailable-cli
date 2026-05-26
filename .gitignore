@@ -20,4 +20,4 @@ go.work.sum
 .idea/
 .vscode/
 
-.emailable.yml
+/.emailable/

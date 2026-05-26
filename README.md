@@ -51,7 +51,7 @@ browser and the CLI receives an access token.
 emailable login
 ```
 
-Credentials are stored at `~/.config/emailable/config.yml`. Run
+Credentials are stored at `~/.config/emailable/credentials.json`. Run
 `emailable logout` to remove the stored token. Access tokens are refreshed
 automatically when close to expiry; a dim `Refreshed access token.` line is
 printed to stderr when that happens (suppressed in `--json` mode).
@@ -66,21 +66,21 @@ save the key once via `login`.
 **Per-invocation** (preferred for CI):
 
 ```bash
-EMAILABLE_API_KEY=ek_live_... emailable account status
+EMAILABLE_API_KEY=live_xxx... emailable account status
 ```
 
 **Saved** (preferred for personal machines): `emailable login` accepts an
 API key via stdin pipe or via the login-local `--api-key` flag. The key is
 validated against `/v1/account` before being written to
-`~/.config/emailable/config.yml`, and supersedes any prior OAuth
+`~/.config/emailable/credentials.json`, and supersedes any prior OAuth
 credentials.
 
 ```bash
 # Pipe from a password manager / secret store (key stays out of shell history)
-op read "op://Personal/Emailable/api-key" | emailable login
+op read "op://Vault/Emailable/api-key" | emailable login
 
 # Or pass directly (lands in shell history — avoid for shared machines)
-emailable login --api-key ek_live_...
+emailable login --api-key live_xxx...
 ```
 
 After saving, every subsequent command uses the stored key with no env
@@ -89,7 +89,7 @@ var or flag needed. Run `emailable logout` to remove it.
 Resolution order when multiple sources are configured:
 
 1. `EMAILABLE_API_KEY` env var
-2. Stored API key (`api_key` in `config.yml`)
+2. Stored API key (`api_key` in `~/.config/emailable/credentials.json`)
 3. Stored OAuth access token
 
 #### Inspecting local auth state
@@ -407,10 +407,37 @@ All of the env vars the CLI honors, in one place:
 | `NO_COLOR`           | Standard [no-color.org](https://no-color.org/) convention — any non-empty value suppresses ANSI colors. |
 | `EMAILABLE_NO_UPDATE_NOTIFIER` | Any truthy value (`1`/`true`/`yes`/`on`) disables the daily "new release available" notifier. See [Update notifier](#update-notifier). |
 | `CI`                 | When set, the update notifier is silently skipped (common-sense default in CI environments). |
-| `XDG_CONFIG_HOME`    | Where the config file lives. Defaults to `~/.config`; the CLI stores credentials under `$XDG_CONFIG_HOME/emailable/config.yml`. |
+| `XDG_CONFIG_HOME`    | Base dir for the config and credentials files. Defaults to `~/.config`; the CLI reads `$XDG_CONFIG_HOME/emailable/config.json` and stores credentials at `$XDG_CONFIG_HOME/emailable/credentials.json`. |
 | `XDG_CACHE_HOME`     | Where the update-check cache lives. Defaults to `~/.cache`; the CLI stores the cache at `$XDG_CACHE_HOME/emailable/update-check.json`. |
 
-Explicit flags always win over env vars; env vars win over stored config.
+Explicit flags always win over env vars; env vars win over the config file.
+
+### Config file
+
+Non-secret preferences live in a JSON file with two scopes:
+
+- **Global:** `~/.config/emailable/config.json` (machine-wide defaults).
+- **Project:** `./.emailable/config.json` (discovered by walking up from the
+  current working directory). Overrides the global file per-field.
+
+Both files are user-managed — the CLI reads them but never writes to them.
+Credentials are deliberately stored separately in
+`~/.config/emailable/credentials.json`.
+
+Schema:
+
+```json
+{
+  "output": "json"
+}
+```
+
+| Field | Effect |
+| --- | --- |
+| `output` | Default output format (`human` or `json`). Equivalent to `EMAILABLE_OUTPUT`. |
+
+Per-field precedence (high → low): command-line flag → env var → project
+file → global file → built-in default.
 
 ### Shell completion
 

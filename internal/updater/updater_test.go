@@ -339,16 +339,12 @@ func TestShouldSkip(t *testing.T) {
 			want: SkipDevVersion,
 		},
 		{
-			name: "opt-out env var",
+			name: "opt-out resolved by caller",
 			in: Conditions{
 				CurrentVersion: "0.1.0",
 				StderrTTY:      true,
-				Env: func(k string) string {
-					if k == OptOutEnv {
-						return "1"
-					}
-					return ""
-				},
+				OptOut:         true,
+				Env:            emptyEnv,
 			},
 			want: SkipOptOut,
 		},
@@ -382,17 +378,13 @@ func TestShouldSkip(t *testing.T) {
 			want: SkipNone,
 		},
 		{
-			name: "opt-out wins over JSON ordering doesn't matter for skip",
+			name: "opt-out wins over JSON",
 			in: Conditions{
 				CurrentVersion: "0.1.0",
 				JSONMode:       true,
 				StderrTTY:      true,
-				Env: func(k string) string {
-					if k == OptOutEnv {
-						return "yes"
-					}
-					return ""
-				},
+				OptOut:         true,
+				Env:            emptyEnv,
 			},
 			want: SkipOptOut,
 		},

@@ -47,9 +47,6 @@ const CacheTTL = 24 * time.Hour
 // a separate 1-second post-command grace window).
 const HTTPTimeout = 5 * time.Second
 
-// OptOutEnv is the env var users set to disable the notifier entirely.
-const OptOutEnv = "EMAILABLE_NO_UPDATE_NOTIFIER"
-
 // Result is the outcome of a successful Check. When LatestVersion is empty
 // the caller should treat the result as "nothing useful to say" — either
 // the network failed silently, the version comparison was ambiguous, or
@@ -261,8 +258,13 @@ type Conditions struct {
 	// StderrTTY is true when stderr is attached to a terminal. False
 	// suppresses the notice (no point printing a nudge to a logfile).
 	StderrTTY bool
+	// OptOut is the resolved opt-out signal — true when the user disabled the
+	// notifier via EMAILABLE_NO_UPDATE_NOTIFIER. Resolved by the caller (see
+	// env.UpdateNotifierOptOut) so the updater package doesn't read the env.
+	OptOut bool
 	// Env reads environment variables; injectable so tests don't have to
-	// mutate the process environment. nil means use os.Getenv.
+	// mutate the process environment. nil means use os.Getenv. Currently
+	// only used for the CI check.
 	Env func(string) string
 }
 
@@ -276,7 +278,7 @@ func ShouldSkip(c Conditions) SkipReason {
 	if c.CurrentVersion == "" || c.CurrentVersion == "dev" {
 		return SkipDevVersion
 	}
-	if isTruthy(getenv(OptOutEnv)) {
+	if c.OptOut {
 		return SkipOptOut
 	}
 	if getenv("CI") != "" {

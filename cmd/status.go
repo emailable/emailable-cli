@@ -23,7 +23,7 @@ func newStatusCmd() *cobra.Command {
 		Short:        "Show local auth state (no network call)",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
-		Example: `  # Show the active env, config path, and credential source
+		Example: `  # Show the active env, credentials path, and auth source
   emailable status
 
   # JSON output for scripts and agents
@@ -32,10 +32,9 @@ func newStatusCmd() *cobra.Command {
 	}
 }
 
-// runStatusE prints the active environment, config path, and stored
-// credential state. Never hits the network: an agent or human can quickly
-// answer "what does the CLI think is going on locally?" without waiting on
-// the API.
+// runStatusE prints the active environment, file paths, and stored credential
+// state. Never hits the network: an agent or human can quickly answer "what
+// does the CLI think is going on locally?" without waiting on the API.
 //
 // Human mode renders a labeled block; --json emits a flat object suitable
 // for parsing by scripts.
@@ -48,24 +47,28 @@ func runStatusE(cmd *cobra.Command, _ []string) error {
 	source, loggedIn := authSourceFor(cctx)
 	expiresAt := ""
 	expiresIn := 0
-	if source == "oauth" && !cctx.Config.ExpiresAt.IsZero() {
-		expiresAt = cctx.Config.ExpiresAt.UTC().Format(time.RFC3339)
-		if secs := int(time.Until(cctx.Config.ExpiresAt).Seconds()); secs > 0 {
+	if source == "oauth" && !cctx.Credentials.ExpiresAt.IsZero() {
+		expiresAt = cctx.Credentials.ExpiresAt.UTC().Format(time.RFC3339)
+		if secs := int(time.Until(cctx.Credentials.ExpiresAt).Seconds()); secs > 0 {
 			expiresIn = secs
 		}
 	}
 
 	if jsonOutput {
 		payload := map[string]any{
-			"logged_in":   loggedIn,
-			"env":         cctx.Env.Name,
-			"api_url":     cctx.Env.APIBaseURL,
-			"oauth_url":   cctx.Env.OAuthBaseURL,
-			"config_path": cctx.ConfigPath,
-			"auth_source": source,
+			"logged_in":        loggedIn,
+			"env":              cctx.Env.Name,
+			"api_url":          cctx.Env.APIBaseURL,
+			"oauth_url":        cctx.Env.OAuthBaseURL,
+			"credentials_path": cctx.CredentialsPath,
+			"config_path":      cctx.GlobalConfigPath,
+			"auth_source":      source,
 		}
-		if source == "oauth" && cctx.Config.OwnerEmail != "" {
-			payload["owner_email"] = cctx.Config.OwnerEmail
+		if cctx.ProjectConfigPath != "" {
+			payload["project_config_path"] = cctx.ProjectConfigPath
+		}
+		if source == "oauth" && cctx.Credentials.OwnerEmail != "" {
+			payload["owner_email"] = cctx.Credentials.OwnerEmail
 		}
 		if expiresAt != "" {
 			payload["expires_at"] = expiresAt
@@ -78,15 +81,15 @@ func runStatusE(cmd *cobra.Command, _ []string) error {
 }
 
 // authSourceFor returns the credential source the CLI would use for the
-// next request. Distinguishes between the three API-key locations (flag,
-// env, stored config) so a user debugging "why is this key being used?"
-// can see the answer immediately. Returns "oauth" for a stored OAuth
-// token and "none" when no credentials are configured.
+// next request. Distinguishes the API-key locations (env, stored) so a user
+// debugging "why is this key being used?" can see the answer immediately.
+// Returns "oauth" for a stored OAuth token and "none" when no credentials
+// are configured.
 func authSourceFor(cctx *cmdCtx) (source string, loggedIn bool) {
 	if _, src := cctx.effectiveAPIKey(); src != apiKeySourceNone {
 		return string(src), true
 	}
-	if cctx.Config.AccessToken != "" {
+	if cctx.Credentials.AccessToken != "" {
 		return string(apiKeySourceOAuth), true
 	}
 	return string(apiKeySourceMissing), false
@@ -114,8 +117,8 @@ func printStatusHuman(cmd *cobra.Command, cctx *cmdCtx, source string, loggedIn 
 		{"Status:", stateStyle.Render(stateText)},
 		{"Source:", value.Render(source)},
 	}
-	if source == "oauth" && cctx.Config.OwnerEmail != "" {
-		rows = append(rows, [2]string{"Account:", value.Render(cctx.Config.OwnerEmail)})
+	if source == "oauth" && cctx.Credentials.OwnerEmail != "" {
+		rows = append(rows, [2]string{"Account:", value.Render(cctx.Credentials.OwnerEmail)})
 	}
 	if expiresAt != "" {
 		expiry := expiresAt
@@ -130,8 +133,12 @@ func printStatusHuman(cmd *cobra.Command, cctx *cmdCtx, source string, loggedIn 
 		[2]string{"Env:", value.Render(cctx.Env.Name)},
 		[2]string{"API URL:", dim.Render(cctx.Env.APIBaseURL)},
 		[2]string{"OAuth URL:", dim.Render(cctx.Env.OAuthBaseURL)},
-		[2]string{"Config:", dim.Render(cctx.ConfigPath)},
+		[2]string{"Credentials:", dim.Render(cctx.CredentialsPath)},
+		[2]string{"Config:", dim.Render(cctx.GlobalConfigPath)},
 	)
+	if cctx.ProjectConfigPath != "" {
+		rows = append(rows, [2]string{"Project config:", dim.Render(cctx.ProjectConfigPath)})
+	}
 
 	width := 0
 	for _, r := range rows {

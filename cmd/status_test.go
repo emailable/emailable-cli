@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emailable/emailable-cli/internal/config"
+	"github.com/emailable/emailable-cli/internal/credentials"
 )
 
 // TestStatus_NotLoggedIn covers the empty-config human path and exercises
@@ -81,13 +81,13 @@ func TestStatus_APIKeyEnv(t *testing.T) {
 // expires_at/expires_in and the human "Account" row.
 func TestStatus_OAuth(t *testing.T) {
 	env := newTestEnv(t, http.NotFoundHandler())
-	cfg := &config.Config{
+	creds := &credentials.Credentials{
 		AccessToken:  "at_xxx",
 		RefreshToken: "rt_xxx",
 		ExpiresAt:    time.Now().Add(1 * time.Hour),
 		OwnerEmail:   "owner@example.com",
 	}
-	if err := cfg.Save(env.ConfigPath); err != nil {
+	if err := creds.Save(env.CredentialsPath); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -125,12 +125,12 @@ func TestStatus_OAuth(t *testing.T) {
 // renderer (expires_in <= 0).
 func TestStatus_OAuthExpired(t *testing.T) {
 	env := newTestEnv(t, http.NotFoundHandler())
-	cfg := &config.Config{
+	creds := &credentials.Credentials{
 		AccessToken:  "at_xxx",
 		RefreshToken: "rt_xxx",
 		ExpiresAt:    time.Now().Add(-1 * time.Hour),
 	}
-	if err := cfg.Save(env.ConfigPath); err != nil {
+	if err := creds.Save(env.CredentialsPath); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 

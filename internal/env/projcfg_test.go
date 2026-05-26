@@ -27,8 +27,8 @@ func TestFindProjectConfig(t *testing.T) {
 			setup: func(t *testing.T) (string, string, string, bool) {
 				home := t.TempDir()
 				start := filepath.Join(home, "proj")
-				cfg := filepath.Join(start, projectConfigFilename)
-				writeFile(t, cfg, "api_url: x\noauth_url: y\n")
+				cfg := filepath.Join(start, projectConfigDir, projectConfigFilename)
+				writeFile(t, cfg, `{"api_url":"x","oauth_url":"y"}`)
 				return start, home, cfg, true
 			},
 		},
@@ -36,9 +36,9 @@ func TestFindProjectConfig(t *testing.T) {
 			name: "file two levels up",
 			setup: func(t *testing.T) (string, string, string, bool) {
 				home := t.TempDir()
-				cfg := filepath.Join(home, "proj", projectConfigFilename)
+				cfg := filepath.Join(home, "proj", projectConfigDir, projectConfigFilename)
 				start := filepath.Join(home, "proj", "sub", "deeper")
-				writeFile(t, cfg, "api_url: x\noauth_url: y\n")
+				writeFile(t, cfg, `{"api_url":"x","oauth_url":"y"}`)
 				if err := os.MkdirAll(start, 0o755); err != nil {
 					t.Fatalf("mkdir: %v", err)
 				}
@@ -49,9 +49,9 @@ func TestFindProjectConfig(t *testing.T) {
 			name: "file at stopAt (home) inclusive",
 			setup: func(t *testing.T) (string, string, string, bool) {
 				home := t.TempDir()
-				cfg := filepath.Join(home, projectConfigFilename)
+				cfg := filepath.Join(home, projectConfigDir, projectConfigFilename)
 				start := filepath.Join(home, "a", "b")
-				writeFile(t, cfg, "api_url: x\noauth_url: y\n")
+				writeFile(t, cfg, `{"api_url":"x","oauth_url":"y"}`)
 				if err := os.MkdirAll(start, 0o755); err != nil {
 					t.Fatalf("mkdir: %v", err)
 				}
@@ -74,8 +74,8 @@ func TestFindProjectConfig(t *testing.T) {
 			setup: func(t *testing.T) (string, string, string, bool) {
 				// Config sits above stopAt; walk-up must stop and not find it.
 				root := t.TempDir()
-				abovePath := filepath.Join(root, projectConfigFilename)
-				writeFile(t, abovePath, "api_url: x\noauth_url: y\n")
+				abovePath := filepath.Join(root, projectConfigDir, projectConfigFilename)
+				writeFile(t, abovePath, `{"api_url":"x","oauth_url":"y"}`)
 				stopAt := filepath.Join(root, "home")
 				start := filepath.Join(stopAt, "proj")
 				if err := os.MkdirAll(start, 0o755); err != nil {
@@ -93,8 +93,8 @@ func TestFindProjectConfig(t *testing.T) {
 				// along the way.
 				base := t.TempDir()
 				outside := filepath.Join(base, "elsewhere", "repo")
-				cfg := filepath.Join(base, "elsewhere", projectConfigFilename)
-				writeFile(t, cfg, "api_url: x\noauth_url: y\n")
+				cfg := filepath.Join(base, "elsewhere", projectConfigDir, projectConfigFilename)
+				writeFile(t, cfg, `{"api_url":"x","oauth_url":"y"}`)
 				if err := os.MkdirAll(outside, 0o755); err != nil {
 					t.Fatalf("mkdir: %v", err)
 				}
@@ -123,41 +123,41 @@ func TestFindProjectConfig(t *testing.T) {
 
 func TestLoadProjectConfig_Valid(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, projectConfigFilename)
-	writeFile(t, path, "api_url: https://api.example.test/v1\noauth_url: https://app.example.test\n")
+	path := filepath.Join(dir, projectConfigDir, projectConfigFilename)
+	writeFile(t, path, `{"api_url":"https://api.example.test/v1","oauth_url":"https://app.example.test"}`)
 
-	api, oauth, err := loadProjectConfig(path)
+	cfg, err := loadProjectConfig(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if api != "https://api.example.test/v1" {
-		t.Errorf("api: got %q", api)
+	if cfg.APIURL != "https://api.example.test/v1" {
+		t.Errorf("api: got %q", cfg.APIURL)
 	}
-	if oauth != "https://app.example.test" {
-		t.Errorf("oauth: got %q", oauth)
+	if cfg.OAuthURL != "https://app.example.test" {
+		t.Errorf("oauth: got %q", cfg.OAuthURL)
 	}
 }
 
 func TestLoadProjectConfig_Empty(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, projectConfigFilename)
+	path := filepath.Join(dir, projectConfigDir, projectConfigFilename)
 	writeFile(t, path, "")
 
-	api, oauth, err := loadProjectConfig(path)
+	cfg, err := loadProjectConfig(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if api != "" || oauth != "" {
-		t.Errorf("empty file should yield empty values, got api=%q oauth=%q", api, oauth)
+	if cfg.APIURL != "" || cfg.OAuthURL != "" {
+		t.Errorf("empty file should yield empty URLs, got api=%q oauth=%q", cfg.APIURL, cfg.OAuthURL)
 	}
 }
 
 func TestLoadProjectConfig_HalfSet(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, projectConfigFilename)
-	writeFile(t, path, "api_url: https://api.example.test/v1\n")
+	path := filepath.Join(dir, projectConfigDir, projectConfigFilename)
+	writeFile(t, path, `{"api_url":"https://api.example.test/v1"}`)
 
-	_, _, err := loadProjectConfig(path)
+	_, err := loadProjectConfig(path)
 	if err == nil {
 		t.Fatal("expected error for half-set config")
 	}
@@ -168,21 +168,24 @@ func TestLoadProjectConfig_HalfSet(t *testing.T) {
 
 func TestLoadProjectConfig_Malformed(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, projectConfigFilename)
-	writeFile(t, path, "api_url: [unterminated\n")
+	path := filepath.Join(dir, projectConfigDir, projectConfigFilename)
+	writeFile(t, path, `{"api_url": [unterminated`)
 
-	_, _, err := loadProjectConfig(path)
+	_, err := loadProjectConfig(path)
 	if err == nil {
-		t.Fatal("expected error for malformed yaml")
+		t.Fatal("expected error for malformed json")
 	}
 }
 
 func TestLoadProjectConfig_Missing(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "does-not-exist.yaml")
+	path := filepath.Join(dir, "does-not-exist.json")
 
-	_, _, err := loadProjectConfig(path)
-	if err == nil {
-		t.Fatal("expected error for missing file")
+	cfg, err := loadProjectConfig(path)
+	if err != nil {
+		t.Fatalf("missing file should not error, got %v", err)
+	}
+	if cfg.APIURL != "" || cfg.OAuthURL != "" {
+		t.Errorf("missing file should yield empty cfg, got %+v", cfg)
 	}
 }

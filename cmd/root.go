@@ -196,13 +196,18 @@ func newRootCmd(v string) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// PersistentPreRunE fires after flag parsing but before any
-		// command's RunE. We use it to honor EMAILABLE_OUTPUT — a default
-		// the user can set per-session so they don't have to thread
-		// --json through every call. An explicit --json on the command
-		// line always wins.
+		// command's RunE. We use it to honor the output-format default —
+		// flag > EMAILABLE_OUTPUT env var > config file's `output` field >
+		// "human". An explicit --json on the command line always wins.
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			if !cmd.Flags().Changed("json") && strings.EqualFold(os.Getenv(outputEnv), "json") {
-				jsonOutput = true
+			if !cmd.Flags().Changed("json") {
+				merged, err := env.MergedConfig()
+				if err != nil {
+					return err
+				}
+				if strings.EqualFold(merged.Output, "json") {
+					jsonOutput = true
+				}
 			}
 			return nil
 		},
@@ -293,6 +298,7 @@ func Execute() {
 		JSONMode:       jsonOutput,
 		Quiet:          quietMode,
 		StderrTTY:      ui.IsTTY(root.ErrOrStderr()),
+		OptOut:         env.UpdateNotifierOptOut(),
 	})
 
 	if runErr != nil {
