@@ -309,18 +309,6 @@ emailable account status --debug
 EMAILABLE_DEBUG=1 emailable verify hello@example.com
 ```
 
-### Color output
-
-The CLI uses ANSI colors on TTY output and suppresses them when stdout is
-piped or redirected. To force-disable colors even on a TTY, pass
-`--no-color` or set [`NO_COLOR`](https://no-color.org/) to any non-empty
-value:
-
-```bash
-emailable account status --no-color
-NO_COLOR=1 emailable account status
-```
-
 ### Quiet mode
 
 Pass `--quiet` (or `-q`) to suppress non-error human output — success
@@ -416,7 +404,7 @@ All of the env vars the CLI honors, in one place:
 | `EMAILABLE_API_KEY`  | API key for non-interactive auth. Takes precedence over a stored API key or OAuth token. |
 | `EMAILABLE_OUTPUT`   | Default output format when `--json` isn't passed. Set to `json` to make every command emit JSON. |
 | `EMAILABLE_DEBUG`    | Any non-empty value dumps HTTP requests/responses to stderr (with `Authorization` redacted). Equivalent to `--debug`. |
-| `NO_COLOR`           | Standard [no-color.org](https://no-color.org/) convention — any non-empty value suppresses ANSI colors. Equivalent to `--no-color`. |
+| `NO_COLOR`           | Standard [no-color.org](https://no-color.org/) convention — any non-empty value suppresses ANSI colors. |
 | `EMAILABLE_NO_UPDATE_NOTIFIER` | Any truthy value (`1`/`true`/`yes`/`on`) disables the daily "new release available" notifier. See [Update notifier](#update-notifier). |
 | `CI`                 | When set, the update notifier is silently skipped (common-sense default in CI environments). |
 | `XDG_CONFIG_HOME`    | Where the config file lives. Defaults to `~/.config`; the CLI stores credentials under `$XDG_CONFIG_HOME/emailable/config.yml`. |

@@ -65,33 +65,6 @@ func TestIsTTY_NoColor(t *testing.T) {
 	}
 }
 
-// TestSetNoColor verifies the --no-color "force off" path: with isTerminal
-// stubbed to true, NO_COLOR unset, and noColorForce=true, IsTTY must report
-// false. Toggling back to false restores the prior behavior.
-func TestSetNoColor(t *testing.T) {
-	orig := isTerminal
-	t.Cleanup(func() { isTerminal = orig })
-	isTerminal = func(io.Writer) bool { return true }
-	t.Setenv("NO_COLOR", "")
-
-	t.Cleanup(func() { SetNoColor(false) })
-
-	var buf bytes.Buffer
-	if !IsTTY(&buf) {
-		t.Fatalf("baseline: IsTTY should be true with isTerminal=true, NO_COLOR unset, no force")
-	}
-
-	SetNoColor(true)
-	if IsTTY(&buf) {
-		t.Errorf("SetNoColor(true) should force IsTTY=false")
-	}
-
-	SetNoColor(false)
-	if !IsTTY(&buf) {
-		t.Errorf("SetNoColor(false) should restore IsTTY=true")
-	}
-}
-
 func TestSpinner_SetMessage_NonTTY(t *testing.T) {
 	var buf bytes.Buffer
 	s := NewTo(&buf, "first")

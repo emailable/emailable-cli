@@ -59,9 +59,6 @@ func newTestEnv(t *testing.T, handler http.Handler) *testEnv {
 	prevQuiet := quietMode
 	quietMode = false
 	t.Cleanup(func() { quietMode = prevQuiet })
-	prevNoColor := noColor
-	noColor = false
-	t.Cleanup(func() { noColor = prevNoColor })
 
 	// env.Current() returns "custom" when EMAILABLE_API_URL is set.
 	path, err := config.DefaultPath("custom")

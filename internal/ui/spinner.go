@@ -19,21 +19,6 @@ import (
 // non-empty value the CLI suppresses ANSI color/styling even on a real TTY.
 const noColorEnv = "NO_COLOR"
 
-// noColorForce, when true, forces IsTTY to return false regardless of whether
-// the underlying writer is a real terminal. Set by SetNoColor — typically
-// from the cmd package's --no-color persistent flag binding. The env var
-// NO_COLOR is consulted independently inside IsTTY so either input suppresses
-// color.
-var noColorForce bool
-
-// SetNoColor toggles the process-wide "force no color" state. Idempotent and
-// safe to call multiple times (e.g. once per root command construction).
-// Mirrors the NO_COLOR env var: once on, IsTTY returns false for every writer
-// for the remainder of the process.
-func SetNoColor(on bool) {
-	noColorForce = on
-}
-
 // SpinnerStyle is the shared lipgloss style applied to the spinner glyph
 // across every animated component (Spinner, Bar, …) so the indicator
 // reads as the same icon everywhere. Color 69 is the same purple/blue
@@ -56,9 +41,6 @@ const TickInterval = 100 * time.Millisecond
 // var is set to any non-empty value, returns false even when w is a real
 // terminal. This lets users (and AI agents) opt out of color globally.
 func IsTTY(w io.Writer) bool {
-	if noColorForce {
-		return false
-	}
 	if os.Getenv(noColorEnv) != "" {
 		return false
 	}

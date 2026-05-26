@@ -43,8 +43,8 @@ const outputEnv = "EMAILABLE_OUTPUT"
 // loaded config, persistent flags. Commands grab one via newCmdCtx() in their
 // RunE.
 //
-// JSONMode / Quiet / NoColor are populated from the persistent flag state at
-// the time the cmdCtx is built. Commands should prefer reading these fields
+// JSONMode and Quiet are populated from the persistent flag state at the
+// time the cmdCtx is built. Commands should prefer reading these fields
 // over the package-level globals so behavior remains consistent even when a
 // command-local helper (e.g. applyStreamImplications) overrides the effective
 // value for its caller.
@@ -54,7 +54,6 @@ type cmdCtx struct {
 	Config     *config.Config
 	JSONMode   bool
 	Quiet      bool
-	NoColor    bool
 
 	// refreshNoticeWriter, when non-nil, receives a short stderr message the
 	// first time requireAuth performs an OAuth refresh during this command's
@@ -83,9 +82,9 @@ func newCmdCtxFor(cmd *cobra.Command, jsonMode bool) (*cmdCtx, error) {
 // path, and loads (or returns empty) the config. Does not enforce that the
 // user is logged in — that's the per-command's job via requireAuth.
 //
-// Quiet and NoColor are read off the package-level flag globals at call time
-// (cobra has already populated them by the time any RunE fires) so callers
-// only need to thread the JSON value through.
+// Quiet is read off the package-level flag global at call time (cobra has
+// already populated it by the time any RunE fires) so callers only need to
+// thread the JSON value through.
 func newCmdCtx(jsonMode bool) (*cmdCtx, error) {
 	e, err := env.Current()
 	if err != nil {
@@ -105,7 +104,6 @@ func newCmdCtx(jsonMode bool) (*cmdCtx, error) {
 		Config:     cfg,
 		JSONMode:   jsonMode,
 		Quiet:      quietMode,
-		NoColor:    noColor,
 	}, nil
 }
 
