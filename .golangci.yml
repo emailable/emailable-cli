@@ -1,0 +1,16 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck       # unhandled errors
+    - govet          # the same checks as `go vet`
+    - ineffassign    # detect ineffective assignments
+    - staticcheck    # comprehensive static analysis (also subsumes gosimple, unused)
+
+formatters:
+  enable:
+    - gofmt          # enforce canonical formatting

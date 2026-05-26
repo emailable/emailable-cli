@@ -1,0 +1,95 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    # Generate man pages from a fresh local build. Goreleaser runs this once
+    # before any cross-compiled artifacts are produced, so the pages end up
+    # in every archive (see archives.files below) regardless of GOOS.
+    - sh -c 'go run . man -o ./man'
+
+builds:
+  - id: emailable
+    main: .
+    binary: emailable
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X github.com/emailable/emailable-cli/cmd.version={{ .Version }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: emailable
+    ids:
+      - emailable
+    name_template: "emailable_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    # Bundle the generated man pages alongside the binary in every archive.
+    # The Homebrew cask (below) picks them up automatically; users on
+    # bare-tarball installs can copy `man/*.1` into their MANPATH.
+    files:
+      - LICENSE
+      - README.md
+      - man/*.1
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  draft: false
+  prerelease: auto
+
+homebrew_casks:
+  - name: emailable
+    ids:
+      - emailable
+    binaries:
+      - emailable
+    repository:
+      owner: emailable
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://emailable.com"
+    description: "Official command-line interface for the Emailable API"
+    skip_upload: auto
+    # Install the bundled man(1) pages so `man emailable` works out of the
+    # box for cask users. Globs aren't supported — list each page explicitly.
+    # Regenerate this list whenever a top-level command is added or removed.
+    manpages:
+      - man/emailable.1
+      - man/emailable-account.1
+      - man/emailable-account-status.1
+      - man/emailable-batch.1
+      - man/emailable-batch-get.1
+      - man/emailable-batch-verify.1
+      - man/emailable-login.1
+      - man/emailable-logout.1
+      - man/emailable-status.1
+      - man/emailable-verify.1
+      - man/emailable-version.1

@@ -1,0 +1,23 @@
+# Binaries
+/bin/
+/dist/
+emailable
+
+# Generated man pages (built at release time by goreleaser)
+/man/
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+
+# Go workspaces
+go.work
+go.work.sum
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+.emailable.yml
