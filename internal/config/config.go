@@ -16,9 +16,8 @@ import (
 
 const appDir = "emailable"
 
-// Config is the on-disk schema. All fields are optional and the file is the
-// lowest-priority source (see env.MergedConfig for per-field precedence).
-// APIURL and OAuthURL must be set together within a single file.
+// Config is the on-disk schema. All fields are optional. APIURL and OAuthURL
+// must be set together within a single file.
 type Config struct {
 	APIURL   string `json:"api_url,omitempty"`
 	OAuthURL string `json:"oauth_url,omitempty"`

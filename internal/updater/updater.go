@@ -1,20 +1,11 @@
-// Package updater implements an unobtrusive "new release available" notifier
-// modeled on the patterns used by `gh` and `stripe`. On each run the CLI
-// asks GitHub for the latest release of emailable/emailable-cli at most once
-// per 24 hours, caches the answer on disk, and prints a single dim line to
-// stderr when a newer version is available.
+// Package updater implements an unobtrusive "new release available" notifier.
+// It checks GitHub for the latest release at most once per 24h, caches the
+// answer on disk, and prints a short two-line stderr notice (version + release
+// URL) when an update exists.
 //
-// The notifier is designed to never block the user's command:
-//
-//   - Check runs in a goroutine kicked off before the cobra command executes.
-//   - After the command finishes, the caller briefly waits (≤1s) for the
-//     check to complete, then prints if applicable. If the check is still
-//     pending, the caller abandons and exits — never delaying process exit.
-//   - Any error (offline, GitHub down, rate-limit, malformed cache, …) is
-//     swallowed silently: no surface, no exit-code impact, no stdout writes.
-//
-// All I/O (HTTP, filesystem) is injectable so tests can run hermetically
-// without ever hitting real GitHub.
+// The notifier must never block or fail the user's command: the check runs in
+// a goroutine, the caller waits at most ~1s for it before exiting, and any
+// error is swallowed silently. All I/O is injectable for hermetic tests.
 package updater
 
 import (
@@ -38,35 +29,28 @@ var ReleasesAPIURL = "https://api.github.com/repos/emailable/emailable-cli/relea
 // override this — it just gets echoed into the notice string verbatim.
 const ReleasesPageURL = "https://github.com/emailable/emailable-cli/releases/latest"
 
-// CacheTTL is how long a cache hit suppresses the network call. 24h matches
-// gh / stripe / npm / brew so users see updates roughly daily.
+// CacheTTL is how long a cache hit suppresses the network call. 24h so users
+// see updates roughly daily without a check every run.
 const CacheTTL = 24 * time.Hour
 
-// HTTPTimeout caps every GitHub API request. Short enough that even a hung
-// connection won't materially delay process exit (the caller also enforces
-// a separate 1-second post-command grace window).
+// HTTPTimeout caps every GitHub API request, short enough that a hung
+// connection won't materially delay process exit.
 const HTTPTimeout = 5 * time.Second
 
-// Result is the outcome of a successful Check. When LatestVersion is empty
-// the caller should treat the result as "nothing useful to say" — either
-// the network failed silently, the version comparison was ambiguous, or
-// the current version is already up to date.
+// Result is the outcome of a Check. An empty LatestVersion means "nothing
+// useful to say" (silent failure, ambiguous comparison, or already current).
 type Result struct {
-	// CurrentVersion is the version string the caller passed in (without
-	// any leading "v"), echoed back so MaybeNotify can render the notice
-	// without re-plumbing it.
+	// CurrentVersion is the caller's version, leading "v" stripped.
 	CurrentVersion string
-	// LatestVersion is the latest release tag from GitHub, normalized to
-	// strip a leading "v". Empty when there's nothing to report.
+	// LatestVersion is the latest release tag, leading "v" stripped. Empty
+	// when there's nothing to report.
 	LatestVersion string
-	// UpdateAvailable is true iff LatestVersion > CurrentVersion under the
-	// semver comparator in this file. False when versions match, when
-	// either side fails to parse, or when no fetch was attempted.
+	// UpdateAvailable is true iff LatestVersion > CurrentVersion. False when
+	// versions match, either side fails to parse, or no fetch was attempted.
 	UpdateAvailable bool
 }
 
-// cacheEntry is the on-disk schema: ISO8601 timestamp + last-seen version.
-// Kept tiny on purpose — we don't want a corrupted cache to cost users.
+// cacheEntry is the on-disk schema: timestamp + last-seen version.
 type cacheEntry struct {
 	CheckedAt     time.Time `json:"checked_at"`
 	LatestVersion string    `json:"latest_version"`
@@ -76,15 +60,10 @@ type cacheEntry struct {
 // swap it out for one pointed at an httptest server with no real network.
 var httpClient = &http.Client{Timeout: HTTPTimeout}
 
-// Check returns the latest release info for emailable/emailable-cli, using
-// (and updating) a 24-hour disk cache under cacheDir. currentVersion is the
-// running binary's version (with or without "v" prefix). The returned
-// Result.UpdateAvailable reflects the semver comparison.
-//
-// Any error (network, filesystem, JSON, …) returns a zero Result and a nil
-// error: the notifier is best-effort and must never fail the caller. ctx
-// bounds the entire operation; pass context.Background for "use the
-// internal timeout only" semantics.
+// Check returns the latest release info, using and updating a 24h disk cache
+// under cacheDir. currentVersion is the running binary's version (leading "v"
+// optional). Any error yields a zero Result: the notifier is best-effort and
+// must never fail the caller. ctx bounds the whole operation.
 func Check(ctx context.Context, currentVersion, cacheDir string) Result {
 	if currentVersion == "" || currentVersion == "dev" {
 		return Result{}
@@ -97,32 +76,29 @@ func Check(ctx context.Context, currentVersion, cacheDir string) Result {
 
 	cachePath := filepath.Join(cacheDir, "update-check.json")
 
-	// Cache hit (fresh): trust it. We still compare so a cached upgrade
-	// continues to nag every run until the user upgrades.
+	// Fresh cache hit: still compare so a known upgrade nags every run until
+	// the user upgrades.
 	if entry, ok := readCache(cachePath); ok && time.Since(entry.CheckedAt) < CacheTTL {
 		return buildResult(cur, entry.LatestVersion)
 	}
 
 	latest, ok := fetchLatest(ctx)
 	if !ok {
-		// Don't rewrite the cache on failure — preserve whatever stale
-		// entry exists so an offline run won't lose the previously known
-		// version.
+		// Preserve any stale entry on failure so an offline run doesn't lose
+		// the previously known version.
 		return Result{}
 	}
 
-	// Best-effort cache write. A failed write (read-only FS, etc.) just
-	// means we'll re-fetch next time — never user-facing.
+	// Best-effort cache write; a failure just means we re-fetch next time.
 	_ = writeCache(cachePath, cacheEntry{CheckedAt: time.Now().UTC(), LatestVersion: latest})
 
 	return buildResult(cur, latest)
 }
 
-// buildResult assembles a Result from already-normalized version strings.
-// Returns a zero Result when latest is empty or the comparison is ambiguous
-// (either side fails semver parse). Equal versions yield a Result with
-// UpdateAvailable=false but the version fields still populated, which lets
-// the caller distinguish "checked, up to date" from "nothing to report".
+// buildResult assembles a Result from normalized version strings. Returns a
+// zero Result when latest is empty or either side fails semver parse. Equal
+// versions populate the fields with UpdateAvailable=false, distinguishing
+// "checked, up to date" from "nothing to report".
 func buildResult(current, latest string) Result {
 	latest = normalizeVersion(latest)
 	if latest == "" {
@@ -139,13 +115,11 @@ func buildResult(current, latest string) Result {
 	}
 }
 
-// fetchLatest GETs the GitHub releases endpoint and returns the tag_name with
-// any leading "v" stripped. Returns ok=false on any error — HTTP, decode,
-// non-2xx status, empty tag — so the caller can treat all failure modes
-// uniformly (silently skip).
+// fetchLatest GETs the releases endpoint and returns the tag_name, leading
+// "v" stripped. Returns ok=false on any error so callers can skip uniformly.
 func fetchLatest(ctx context.Context) (string, bool) {
-	// Apply an internal timeout in addition to whatever the caller passed
-	// in via ctx, so a context.Background() caller still gets bounded I/O.
+	// Internal timeout on top of ctx so a context.Background() caller still
+	// gets bounded I/O.
 	rctx, cancel := context.WithTimeout(ctx, HTTPTimeout)
 	defer cancel()
 
@@ -153,7 +127,7 @@ func fetchLatest(ctx context.Context) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	// Identify ourselves to GitHub. They reject requests with no UA.
+	// GitHub rejects requests with no User-Agent.
 	req.Header.Set("User-Agent", "emailable-cli-update-check")
 	req.Header.Set("Accept", "application/vnd.github+json")
 
@@ -170,7 +144,7 @@ func fetchLatest(ctx context.Context) (string, bool) {
 	var payload struct {
 		TagName string `json:"tag_name"`
 	}
-	// Limit reader to 1 MiB to avoid a runaway response soaking memory.
+	// Cap at 1 MiB so a runaway response can't soak memory.
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
 		return "", false
 	}
@@ -181,9 +155,8 @@ func fetchLatest(ctx context.Context) (string, bool) {
 	return normalizeVersion(tag), true
 }
 
-// readCache loads the cache file at path. Returns ok=false on any error
-// (missing file, malformed JSON, IO failure), causing the caller to fall
-// through to a fresh fetch.
+// readCache loads the cache file at path. Returns ok=false on any error so
+// the caller falls through to a fresh fetch.
 func readCache(path string) (cacheEntry, bool) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -193,9 +166,7 @@ func readCache(path string) (cacheEntry, bool) {
 	if err := json.Unmarshal(b, &e); err != nil {
 		return cacheEntry{}, false
 	}
-	// A zero CheckedAt would be treated as "infinitely stale" by the TTL
-	// check, which is fine — falls through to a re-fetch. Defensive
-	// check for empty version keeps the cache from masking a fetch error.
+	// Treat a wholly empty entry as a miss so it can't mask a fetch error.
 	if e.CheckedAt.IsZero() && e.LatestVersion == "" {
 		return cacheEntry{}, false
 	}
@@ -203,8 +174,7 @@ func readCache(path string) (cacheEntry, bool) {
 }
 
 // writeCache persists e to path, creating the parent directory if needed.
-// Returns the underlying error for callers that want to log it; production
-// callers ignore it (cache failures are non-fatal).
+// Returns the error for callers that want it; production callers ignore it.
 func writeCache(path string, e cacheEntry) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -213,58 +183,46 @@ func writeCache(path string, e cacheEntry) error {
 	if err != nil {
 		return err
 	}
-	// 0600 in case the cache dir ends up in a shared location — nothing
-	// here is secret, but tighter perms cost nothing.
+	// 0600: nothing here is secret, but tighter perms cost nothing.
 	return os.WriteFile(path, b, 0o600)
 }
 
-// SkipReason represents why the notifier opted out of running on this
-// invocation. Used by callers (and tests) to log/assert without re-deriving
-// the predicate logic.
+// SkipReason represents why the notifier opted out on this invocation.
 type SkipReason int
 
 const (
 	// SkipNone means no skip condition matched; the notifier should run.
 	SkipNone SkipReason = iota
-	// SkipDevVersion is set when the binary reports the "dev" version
-	// (local checkouts shouldn't nag the developer).
+	// SkipDevVersion is set for the "dev" version (don't nag local checkouts).
 	SkipDevVersion
-	// SkipOptOut is set when the EMAILABLE_NO_UPDATE_NOTIFIER env var is
-	// truthy.
+	// SkipOptOut is set when the opt-out env var is truthy.
 	SkipOptOut
 	// SkipCI is set when the CI env var is non-empty.
 	SkipCI
-	// SkipJSON is set when the command is running in --json mode (machine-
-	// readable output mustn't get a stderr update line).
+	// SkipJSON is set in --json mode (no stderr line in machine output).
 	SkipJSON
-	// SkipQuiet is set when --quiet is active (a future flag added by a
-	// parallel agent — see TODO in ShouldSkip).
+	// SkipQuiet is set when --quiet is active.
 	SkipQuiet
 	// SkipNonTTY is set when stderr isn't a terminal.
 	SkipNonTTY
 )
 
-// Conditions is the set of runtime knobs ShouldSkip inspects. All sources
-// are passed in (rather than read from globals) so tests can drive every
-// branch without touching the environment.
+// Conditions is the set of runtime knobs ShouldSkip inspects. All sources are
+// passed in (not read from globals) so tests can drive every branch.
 type Conditions struct {
 	// CurrentVersion is the running binary's version string.
 	CurrentVersion string
-	// JSONMode is true when the user passed --json or set EMAILABLE_OUTPUT=json.
+	// JSONMode is true when output is in JSON mode.
 	JSONMode bool
-	// Quiet is true when the user passed --quiet/-q. Suppresses the notice
-	// so machine-friendly / minimal-output invocations stay clean.
+	// Quiet is true when --quiet/-q suppresses the notice.
 	Quiet bool
-	// StderrTTY is true when stderr is attached to a terminal. False
-	// suppresses the notice (no point printing a nudge to a logfile).
+	// StderrTTY is true when stderr is a terminal; false suppresses the notice.
 	StderrTTY bool
-	// OptOut is the resolved opt-out signal — true when the user disabled the
-	// notifier via EMAILABLE_NO_UPDATE_NOTIFIER. Resolved by the caller (see
-	// env.UpdateNotifierOptOut) so the updater package doesn't read the env.
+	// OptOut is the resolved opt-out signal, computed by the caller so this
+	// package doesn't read the environment for it.
 	OptOut bool
-	// Env reads environment variables; injectable so tests don't have to
-	// mutate the process environment. nil means use os.Getenv. Currently
-	// only used for the CI check.
+	// Env reads environment variables; injectable for tests. nil means
+	// os.Getenv. Currently only the CI check uses it.
 	Env func(string) string
 }
 
@@ -315,8 +273,7 @@ func FormatNotice(r Result, tty bool) string {
 	if !r.UpdateAvailable || r.CurrentVersion == "" || r.LatestVersion == "" {
 		return ""
 	}
-	// Leading blank line separates the notice from the command's own output
-	// — matches gh / stripe.
+	// Leading blank line separates the notice from the command's output.
 	line1 := fmt.Sprintf("A new release of emailable is available: %s → %s", r.CurrentVersion, r.LatestVersion)
 	line2 := ReleasesPageURL
 	if !tty {
@@ -339,10 +296,9 @@ func MaybeNotify(w io.Writer, r Result, tty bool) error {
 	return err
 }
 
-// CacheDir returns the directory where the update-check cache file lives.
-// Honors $XDG_CACHE_HOME, falling back to ~/.cache. Returns the empty
-// string if neither is resolvable (rare — e.g. headless containers with
-// no $HOME); the caller should then skip the cache entirely.
+// CacheDir returns the update-check cache directory, honoring $XDG_CACHE_HOME
+// and falling back to ~/.cache. Returns "" if neither resolves (the caller
+// should then skip the cache).
 func CacheDir() string {
 	if x := os.Getenv("XDG_CACHE_HOME"); x != "" {
 		return filepath.Join(x, "emailable")
@@ -356,12 +312,9 @@ func CacheDir() string {
 
 // --- Semver comparator -------------------------------------------------------
 //
-// We avoid pulling in golang.org/x/mod/semver to keep go.sum lean. The
-// comparator only needs the canonical X.Y.Z[-pre][+build] form GitHub
-// release tags use; corner cases (build metadata semantics, complex
-// pre-release precedence with mixed numeric/alphanumeric identifiers) are
-// covered well enough for the comparison we actually do: "is latest >
-// current?"
+// Hand-rolled to avoid pulling in golang.org/x/mod/semver. It only needs the
+// canonical X.Y.Z[-pre][+build] form GitHub release tags use, covering the
+// one comparison we do: "is latest > current?"
 
 // semver is a parsed version. Pre is the dot-separated pre-release portion
 // (without the leading "-"); empty means a stable release, which by semver
@@ -482,9 +435,7 @@ func cmpPreRelease(a, b string) int {
 	return cmpInt(len(ap), len(bp))
 }
 
-// cmpInt is a tiny -1/0/1 comparator over ints; Go's stdlib doesn't ship
-// one and the alternatives (subtract-and-sign) are easy to get wrong on
-// overflow.
+// cmpInt is a -1/0/1 comparator over ints (subtract-and-sign risks overflow).
 func cmpInt(a, b int) int {
 	switch {
 	case a < b:

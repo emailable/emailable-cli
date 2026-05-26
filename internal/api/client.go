@@ -1,7 +1,5 @@
-// Package api is the HTTP client for the Emailable v1 REST API.
-//
-// Base URL is provided by the caller (typically env.Current().APIBaseURL).
-// All requests carry `Authorization: Bearer <accessToken>`.
+// Package api is the HTTP client for the Emailable v1 REST API. All requests
+// carry `Authorization: Bearer <accessToken>`.
 package api
 
 import (
@@ -20,25 +18,20 @@ import (
 )
 
 // defaultRequestTimeout caps the total wall time for a single API call.
-// The server can legitimately spend up to ~30s on a real-time verify
-// (SMTP probing + Accept-All detection on slow MX hosts), so we set a
-// generous ceiling — but a bounded one, since http.DefaultClient.Timeout
-// of zero would let a hung connection wedge the CLI forever.
+// Generous because a real-time verify can spend ~30s SMTP-probing slow MX
+// hosts, but bounded so a hung connection can't wedge the CLI forever.
 const defaultRequestTimeout = 60 * time.Second
 
-// Retry knobs for 429 handling. Two retries (three attempts total) is enough
-// to ride out a brief burst without making the CLI hang on a sustained
-// rate-limit. maxRetrySleep caps the per-attempt wait so a misbehaving
-// server can't wedge us for hours; minRetrySleep ensures a brief pause even
-// when the server returned an unparseable / zero Reset.
+// Retry knobs for 429 handling. maxRetrySleep caps the per-attempt wait so a
+// misbehaving server can't wedge us for hours; minRetrySleep ensures a brief
+// pause even when the server returned an unparseable / zero Reset.
 const (
 	defaultMaxRetries = 2
 	maxRetrySleep     = 60 * time.Second
 	minRetrySleep     = 500 * time.Millisecond
 )
 
-// Options tunes a Client. All fields are optional. Construct a Client via
-// NewWithOptions; the simpler New is preserved for the common case.
+// Options tunes a Client. All fields are optional.
 type Options struct {
 	// HTTPClient is the underlying transport. nil => a private client with a
 	// bounded per-request timeout is built.
@@ -64,17 +57,13 @@ type Client struct {
 }
 
 // New returns a Client. When httpClient is nil a private *http.Client is
-// constructed with a bounded per-request timeout — callers that need a
-// different transport (e.g. tests, or long-running batch polls) should
-// pass their own.
-// baseURL is typically env.Current().APIBaseURL (with /v1).
-// accessToken is the Bearer credential (OAuth token or API key) from config.
+// constructed with a bounded per-request timeout; callers that need a
+// different transport should pass their own.
 func New(baseURL, accessToken string, httpClient *http.Client) *Client {
 	return NewWithOptions(baseURL, accessToken, Options{HTTPClient: httpClient})
 }
 
-// NewWithOptions returns a Client configured per opts. Use this when you
-// need debug logging or a custom retry budget; otherwise New is fine.
+// NewWithOptions returns a Client configured per opts.
 func NewWithOptions(baseURL, accessToken string, opts Options) *Client {
 	hc := opts.HTTPClient
 	if hc == nil {
@@ -101,8 +90,7 @@ func NewWithOptions(baseURL, accessToken string, opts Options) *Client {
 }
 
 // do issues an HTTP request with the configured auth headers and decodes a
-// JSON response. For non-2xx responses it returns an *Error (which unwraps to
-// ErrUnauthenticated on 401).
+// JSON response. Non-2xx responses return an *Error.
 //
 // 429 responses trigger an automatic retry honoring RateLimit-Reset, capped
 // at c.maxRetries attempts. Each retry rebuilds the request from scratch
@@ -162,8 +150,6 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 		lastErr = apiErr
 
-		// Only retry 429s, and only while we have attempts left. Any other
-		// non-2xx is returned immediately.
 		if resp.StatusCode != 429 || attempt == c.maxRetries {
 			return apiErr
 		}
@@ -193,10 +179,9 @@ func backoffFor(rl *RateLimit, retryAfter string, attempt int) time.Duration {
 		}
 	}
 	if base == 0 {
-		// Exponential default: 1s, 2s, 4s, ...
 		base = time.Duration(1<<attempt) * time.Second
 	}
-	// Add up to 250ms of jitter to spread out concurrent retries.
+	// Jitter spreads out concurrent retries so CLIs don't synchronize.
 	jitter := time.Duration(rand.IntN(250)) * time.Millisecond
 	d := base + jitter
 	if d < minRetrySleep {
@@ -208,10 +193,8 @@ func backoffFor(rl *RateLimit, retryAfter string, attempt int) time.Duration {
 	return d
 }
 
-// dumpRequest writes the outgoing request to c.debugOut when debug is on.
-// The Authorization header is redacted; everything else (URL, headers,
-// body) is shown verbatim so an agent debugging a failure can reproduce
-// the call manually.
+// dumpRequest writes the outgoing request to c.debugOut when debug is on, with
+// the Authorization header redacted.
 func (c *Client) dumpRequest(req *http.Request) {
 	if !c.debug {
 		return
@@ -227,20 +210,15 @@ func (c *Client) dumpRequest(req *http.Request) {
 		fmt.Fprintf(c.debugOut, "DEBUG: dump request: %v\n", err)
 		return
 	}
-	// Leading + trailing blank lines so debug blocks read as a section,
-	// not as adjacent prose.
 	fmt.Fprintf(c.debugOut, "\nDEBUG ==> outgoing request\n%s\n\n", indentLines(string(dump)))
 }
 
-// dumpResponse writes the response (with body) to c.debugOut when debug
-// is on. The body bytes are spliced back in since we've already read them
-// off the wire.
+// dumpResponse writes the response (with body) to c.debugOut when debug is on.
 func (c *Client) dumpResponse(resp *http.Response, body []byte) {
 	if !c.debug {
 		return
 	}
-	// Synthesize a response object whose Body is the bytes we already read;
-	// DumpResponse will write them out.
+	// Splice the already-read body bytes back in so DumpResponse can emit them.
 	clone := *resp
 	clone.Body = io.NopCloser(strings.NewReader(string(body)))
 	dump, err := httputil.DumpResponse(&clone, true)
@@ -248,13 +226,11 @@ func (c *Client) dumpResponse(resp *http.Response, body []byte) {
 		fmt.Fprintf(c.debugOut, "DEBUG: dump response: %v\n", err)
 		return
 	}
-	// Trailing blank line so the next CLI output (normal stdout/stderr,
-	// next request dump, etc) doesn't run flush against the response.
 	fmt.Fprintf(c.debugOut, "DEBUG <== incoming response\n%s\n\n", indentLines(string(dump)))
 }
 
 // indentLines prefixes each line with two spaces so debug output is visually
-// distinct from normal CLI text and easy to scan.
+// distinct from normal CLI text.
 func indentLines(s string) string {
 	if s == "" {
 		return s
@@ -267,10 +243,8 @@ func indentLines(s string) string {
 }
 
 // parseRateLimit reads the IETF draft `RateLimit-*` headers off h and returns
-// a populated *RateLimit when at least one is present. The headers are
-// optional, so missing values stay zero; unparseable values are silently
-// treated as zero too — we'd rather lose the hint than crash on a malformed
-// header.
+// a populated *RateLimit when at least one is present. Missing or unparseable
+// values stay zero rather than failing.
 func parseRateLimit(h http.Header) *RateLimit {
 	limit := h.Get("RateLimit-Limit")
 	remaining := h.Get("RateLimit-Remaining")
@@ -317,8 +291,7 @@ type VerifyOptions struct {
 	Timeout   int   // seconds, 2-10. 0 => server default (5).
 }
 
-// Verify hits GET /verify?email=...&smtp=...&accept_all=...&timeout=... and
-// returns the parsed result. Returns *Error on a non-2xx response.
+// Verify performs a real-time verification of a single email via GET /verify.
 func (c *Client) Verify(ctx context.Context, email string, opts *VerifyOptions) (*VerifyResult, error) {
 	q := url.Values{}
 	q.Set("email", email)
@@ -348,8 +321,8 @@ type SubmitBatchOptions struct {
 	ResponseFields []string // optional subset of result fields to return; nil => all
 }
 
-// SubmitBatch posts the emails (joined comma-separated) to POST /batch and
-// returns the new batch's id + message. Returns *Error on non-2xx.
+// SubmitBatch submits emails for batch verification via POST /batch and
+// returns the new batch's id.
 func (c *Client) SubmitBatch(ctx context.Context, emails []string, opts *SubmitBatchOptions) (*BatchSubmit, error) {
 	form := url.Values{}
 	form.Set("emails", strings.Join(emails, ","))

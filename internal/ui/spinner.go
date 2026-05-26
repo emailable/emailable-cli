@@ -1,7 +1,5 @@
-// Package ui holds small terminal-UI primitives shared across commands so
-// every wait in the CLI animates the same way. Spinner is the indeterminate-
-// progress indicator (login polling, batch-queued phase); progress bars
-// elsewhere reuse Frames + TickInterval so the animation cadence matches.
+// Package ui holds shared terminal-UI primitives (spinner, progress bar) so
+// every animated wait in the CLI uses the same cadence and styling.
 package ui
 
 import (
@@ -15,31 +13,25 @@ import (
 	"golang.org/x/term"
 )
 
-// noColorEnv is the env var name from https://no-color.org/. When set to any
-// non-empty value the CLI suppresses ANSI color/styling even on a real TTY.
+// noColorEnv is the env var name from https://no-color.org/. Any non-empty
+// value suppresses ANSI styling even on a real TTY.
 const noColorEnv = "NO_COLOR"
 
-// SpinnerStyle is the shared lipgloss style applied to the spinner glyph
-// across every animated component (Spinner, Bar, …) so the indicator
-// reads as the same icon everywhere. Color 69 is the same purple/blue
-// used elsewhere in the CLI; changing it here changes every spinner at
-// once.
+// SpinnerStyle is the shared style for the spinner glyph so it reads the same
+// everywhere; changing the color here changes every spinner at once.
 var SpinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
 
 // Frames is the Braille spinner used for every animated wait in the CLI.
 var Frames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
-// TickInterval is the redraw cadence (~10 fps). Fast enough to feel smooth,
-// slow enough to be negligible CPU.
+// TickInterval is the redraw cadence (~10 fps).
 const TickInterval = 100 * time.Millisecond
 
-// IsTTY reports whether w writes to a terminal AND color/animation output
-// should be enabled. Used to gate ANSI styling and spinner animation so piped
-// output doesn't fill with control codes.
+// IsTTY reports whether w writes to a terminal AND color/animation should be
+// enabled, gating ANSI output so pipes don't fill with control codes.
 //
-// Honors the NO_COLOR convention (https://no-color.org/): if the NO_COLOR env
-// var is set to any non-empty value, returns false even when w is a real
-// terminal. This lets users (and AI agents) opt out of color globally.
+// Honors the NO_COLOR convention (https://no-color.org/): a non-empty NO_COLOR
+// env var returns false even on a real terminal.
 func IsTTY(w io.Writer) bool {
 	if os.Getenv(noColorEnv) != "" {
 		return false
@@ -47,9 +39,8 @@ func IsTTY(w io.Writer) bool {
 	return isTerminal(w)
 }
 
-// isTerminal is the pure file-descriptor check, factored out of IsTTY so the
-// NO_COLOR gate can be tested independently of a real PTY. Exposed as a var
-// (not a func) so tests can swap in a fake "always a TTY" implementation.
+// isTerminal is the pure file-descriptor check. A var so tests can swap in a
+// fake TTY.
 var isTerminal = func(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	if !ok {
@@ -141,9 +132,8 @@ func (s *Spinner) Start() {
 				s.mu.Lock()
 				m := s.msg
 				s.mu.Unlock()
-				// \r returns to column 0, \033[K clears to end of line so
-				// shorter messages don't leave stale characters from longer
-				// previous ones.
+				// \r + \033[K clears the line so a shorter message doesn't
+				// leave stale characters from a longer previous one.
 				glyph := SpinnerStyle.Render(string(Frames[i%len(Frames)]))
 				fmt.Fprintf(s.w, "\r\033[K%s %s", glyph, m)
 				i++

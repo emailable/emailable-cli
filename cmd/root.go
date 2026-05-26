@@ -15,13 +15,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// version and buildDate are set at link time via
-//
-//	-ldflags "-X github.com/emailable/emailable-cli/cmd.version=v1.2.3 \
-//	          -X github.com/emailable/emailable-cli/cmd.buildDate=2026-05-21"
-//
-// version defaults to "dev"; buildDate is empty for local builds and falls
-// back to VCS info via runtime/debug.ReadBuildInfo when present.
+// version and buildDate are injected at link time via -ldflags -X. version
+// defaults to "dev"; buildDate is empty for local builds and falls back to VCS
+// info via runtime/debug.ReadBuildInfo when present.
 var (
 	version   = "dev"
 	buildDate = ""
@@ -34,11 +30,10 @@ const releaseURLPrefix = "https://github.com/emailable/emailable-cli/releases/ta
 // (rather than re-querying the cobra flag set) to pick an output formatter.
 var jsonOutput bool
 
-// apiKey is the value of the `login --api-key` local flag. It is NOT a
-// persistent root flag — credentials don't belong on argv for every
-// command (they'd land in shell history and `ps` output), so the only
-// way to supply an API key is `EMAILABLE_API_KEY`, a stored config entry,
-// or `emailable login --api-key VALUE` / a stdin pipe to `emailable login`.
+// apiKey is the value of the `login --api-key` local flag. It is deliberately
+// NOT a persistent root flag: credentials on argv would leak into shell history
+// and `ps` output, so a key only comes via EMAILABLE_API_KEY, stored config, or
+// `login` (flag or stdin pipe).
 var apiKey string
 
 // debugMode is the value of the persistent --debug flag. When true (or when
@@ -61,22 +56,8 @@ const (
 	groupHelpers = "helpers" // built-in cobra commands (help, completion)
 )
 
-// versionDisplay returns the gh-style multi-line version blurb used by both
-// `--version` and the `version` subcommand.
-//
-// Released build:
-//
-//	emailable version 0.1.0 (2026-05-21)
-//	https://github.com/emailable/emailable-cli/releases/tag/v0.1.0
-//
-// Local dev build (no ldflags, run from a git checkout):
-//
-//	emailable version dev (commit abc1234, 2026-05-21)
-//
-// With env overrides active (EMAILABLE_API_URL / EMAILABLE_OAUTH_URL):
-//
-//	emailable version 0.1.0 (2026-05-21) [custom]
-//	https://...
+// versionDisplay returns the multi-line version blurb used by both `--version`
+// and the `version` subcommand.
 func versionDisplay() string {
 	var b strings.Builder
 	b.WriteString("emailable version ")
@@ -119,8 +100,6 @@ type versionInfo struct {
 }
 
 // collectVersionInfo gathers version metadata from ldflags and VCS build info.
-// Mirrors the source data versionExtras consumes; refactored out so the JSON
-// path can render the same facts without re-parsing a formatted string.
 func collectVersionInfo() versionInfo {
 	vi := versionInfo{Version: version, BuildDate: buildDate}
 	info, ok := debug.ReadBuildInfo()
@@ -152,8 +131,7 @@ func collectVersionInfo() versionInfo {
 // version number. Prefers a release-time ldflags-injected buildDate; falls
 // back to runtime/debug.ReadBuildInfo VCS data for local checkouts.
 func versionExtras() string {
-	// Released build path: ldflags-injected buildDate trumps VCS info, and
-	// matches the original behavior of suppressing the "commit …" prefix.
+	// A release-injected buildDate trumps VCS info (and suppresses the commit prefix).
 	if buildDate != "" {
 		return buildDate
 	}
@@ -180,12 +158,10 @@ const longDescription = "Command-line interface for Emailable's email verificati
 // The v argument lets tests inject a deterministic version string; production
 // callers pass the package-level `version` (set via ldflags).
 func newRootCmd(v string) *cobra.Command {
-	// Swap the package-level version so versionDisplay and the `version`
-	// subcommand RunE observe v. Intentionally not restored: tests rely on
-	// the swap persisting across the cobra Execute call below (versionDisplay
-	// is evaluated when newRootCmd returns, but the version subcommand's
-	// RunE reads `version` lazily at execution time). Tests don't run
-	// newRootCmd in parallel, so leaving the variable set is safe.
+	// Swap the package-level version so versionDisplay and the version
+	// subcommand's lazily-read RunE observe v. Intentionally not restored:
+	// tests rely on the swap persisting across Execute and don't run
+	// newRootCmd in parallel, so leaving it set is safe.
 	version = v
 
 	root := &cobra.Command{
@@ -195,10 +171,8 @@ func newRootCmd(v string) *cobra.Command {
 		Version:       versionDisplay(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		// PersistentPreRunE fires after flag parsing but before any
-		// command's RunE. We use it to honor the output-format default —
-		// flag > EMAILABLE_OUTPUT env var > config file's `output` field >
-		// "human". An explicit --json on the command line always wins.
+		// Resolve the default output format before any RunE runs. Precedence:
+		// --json flag > EMAILABLE_OUTPUT > config `output` > "human".
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			if !cmd.Flags().Changed("json") {
 				merged, err := env.MergedConfig()
@@ -212,8 +186,7 @@ func newRootCmd(v string) *cobra.Command {
 			return nil
 		},
 	}
-	// gh-style: print just the full version blurb, no extra "{{ .Name }} version" prefix
-	// (we already include "emailable version " in versionDisplay()).
+	// Print just the blurb; versionDisplay already includes "emailable version ".
 	root.SetVersionTemplate("{{ .Version }}\n")
 
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Return JSON response")
@@ -251,10 +224,8 @@ func newRootCmd(v string) *cobra.Command {
 	// still callable, just doesn't clutter the curated command list.
 	root.CompletionOptions.HiddenDefaultCmd = true
 
-	// Apply gh-style help/usage rendering. SetUsageFunc handles the help
-	// output that cobra emits for --help and on usage errors. We also set
-	// the help template to delegate to the same renderer so `emailable help`
-	// and `emailable --help` produce identical output.
+	// Route both usage errors and --help/`help` through the same renderer so
+	// they produce identical output.
 	root.SetUsageFunc(func(c *cobra.Command) error {
 		return renderHelp(c, c.OutOrStderr())
 	})
@@ -265,19 +236,15 @@ func newRootCmd(v string) *cobra.Command {
 	return root
 }
 
-// Execute runs the root command. Called from main.go.
+// Execute runs the root command.
 //
-// Cobra's default error rendering is silenced (SilenceErrors=true) so we can
-// route every non-nil RunE return through renderError, which handles both
-// JSON-mode (raw API body / envelope) and human-mode (terse one-liner)
-// formatting. Nothing is written to stdout on error; the renderer always
-// writes to stderr. Exit code is 1 on any error.
+// Cobra's default error rendering is silenced so every RunE error is routed
+// through renderError (stderr only). Exit code is non-zero on any error.
 func Execute() {
 	root := newRootCmd(version)
 
-	// Kick off the update check early, in parallel with command execution.
-	// done is closed when the check returns; resultCh carries the outcome.
-	// Both reads in the post-command grace block tolerate a hung check.
+	// Kick off the update check in parallel with command execution; resultCh
+	// carries the outcome. The post-command grace block tolerates a hung check.
 	updCtx, updCancel := context.WithCancel(context.Background())
 	defer updCancel()
 	resultCh := make(chan updater.Result, 1)
@@ -326,13 +293,9 @@ func Execute() {
 // this elapses, we abandon and exit — never delaying the user.
 const updateNoticeWait = 1 * time.Second
 
-// waitAndNotify blocks for at most wait, then either prints the update
-// notice (if the check finished and produced one) or returns silently. The
-// updCancel signal lets a still-running fetch shut itself down promptly.
-//
-// Factored out so both the success and error paths in Execute use identical
-// logic, and so a future caller (e.g. a different binary entrypoint) can
-// reuse it.
+// waitAndNotify blocks for at most wait, then prints the update notice (if the
+// check finished and produced one) or returns silently. updCancel lets a
+// still-running fetch shut itself down promptly.
 func waitAndNotify(w io.Writer, resultCh <-chan updater.Result, updCancel context.CancelFunc, wait time.Duration) {
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
@@ -377,14 +340,11 @@ func renderHelp(c *cobra.Command, w io.Writer) error {
 		writeGroupedCommands(&b, c, tty)
 	}
 
-	// FLAGS — local flags only; persistent inherited flags from root would
-	// duplicate noise on every subcommand. For the root command itself
-	// LocalFlags includes the persistent --json since they live on the same
-	// cobra.Command.
+	// Local flags only by default; persistent flags from root would repeat on
+	// every subcommand. On root, LocalFlags already includes the persistent ones.
 	flags := c.LocalFlags()
 	if c.HasAvailableInheritedFlags() {
-		// Merge inherited flags (e.g. --json) so subcommand help still shows
-		// the persistent flags users actually need.
+		// Merge inherited persistent flags so subcommand help still shows them.
 		flags.AddFlagSet(c.InheritedFlags())
 	}
 	if flags.HasAvailableFlags() {

@@ -7,16 +7,12 @@ package output
 
 import "io"
 
-// Formatter is implemented by both JSON and Human formatters. Print should
-// dispatch on the runtime type of v (single verify result, batch status,
-// account, []VerifyResult, etc) and render appropriately. See human.go for
-// the shapes Human supports.
+// Formatter renders a value, dispatching on its runtime type.
 type Formatter interface {
 	Print(v any) error
 }
 
-// New returns the appropriate Formatter for the requested format.
-// jsonMode=true returns a JSON formatter; otherwise Human.
+// New returns a JSON formatter when jsonMode is true, otherwise a Human one.
 func New(w io.Writer, jsonMode bool) Formatter {
 	if jsonMode {
 		return &JSON{W: w}

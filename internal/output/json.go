@@ -8,11 +8,9 @@ import (
 	"github.com/emailable/emailable-cli/internal/ui"
 )
 
-// JSON pretty-prints any value as JSON, two-space indented, with a trailing
-// newline. When the writer is a TTY (and NO_COLOR isn't set) output is
-// colorized jq-style: keys, strings, numbers, booleans, and null each get a
-// distinct color. Piped, redirected, or NO_COLOR=1 output stays plain so
-// `--json | jq`, file capture, and CI logs are unaffected.
+// JSON pretty-prints any value as two-space-indented JSON with a trailing
+// newline. On a TTY (and NO_COLOR unset) output is colorized jq-style;
+// piped/redirected/NO_COLOR output stays plain.
 type JSON struct {
 	W io.Writer
 }
@@ -33,13 +31,10 @@ func (j *JSON) Print(v any) error {
 	return err
 }
 
-// ANSI escape sequences for the JSON palette. We emit raw codes rather than
-// going through lipgloss because the global lipgloss renderer probes the
-// process's stdin/out/err at init time and silently drops to ASCII output
-// when it can't confirm color support — which means a TTY-detected writer
-// can still receive uncolored bytes through Style.Render. Raw codes are
-// deterministic, easy to test, and match how internal/ui/style.go already
-// colors the help screen.
+// ANSI escape sequences for the JSON palette. Raw codes (not lipgloss): the
+// global lipgloss renderer probes process stdio at init and can drop a
+// TTY-detected writer to uncolored output, whereas raw codes are deterministic
+// and testable.
 const (
 	jsonAnsiReset  = "\x1b[0m"
 	jsonAnsiKey    = "\x1b[1;36m" // bold cyan
@@ -66,10 +61,8 @@ func colorizeJSON(src []byte) []byte {
 		case c == '"':
 			end := scanString(src, i)
 			tok := src[i:end]
-			// Look ahead past horizontal whitespace for ':' to decide whether
-			// this string is an object key or a value. Newlines don't appear
-			// between a key and its colon in encoding/json's output, so we
-			// only skip spaces / tabs.
+			// A following ':' (past spaces/tabs only — no newlines appear
+			// between key and colon) means this string is an object key.
 			k := end
 			for k < len(src) && (src[k] == ' ' || src[k] == '\t') {
 				k++

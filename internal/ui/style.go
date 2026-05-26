@@ -1,9 +1,7 @@
 package ui
 
-// ANSI styling helpers. Each helper takes an explicit tty bool so the caller
-// can detect TTY-ness once (typically against os.Stdout) and propagate the
-// decision through a render pass. When tty is false the helpers return s
-// unchanged, so piped output stays clean.
+// ANSI styling helpers. Each takes an explicit tty bool so the caller detects
+// TTY-ness once and propagates it; when false the helpers return s unchanged.
 
 const (
 	ansiReset = "\033[0m"

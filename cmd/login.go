@@ -86,7 +86,7 @@ func runLoginE(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(cmd.ErrOrStderr(), "Press Enter to open %s in your browser...", dc.VerificationURI)
 
 	reader := bufio.NewReader(os.Stdin)
-	// Non-EOF read errors are non-fatal; proceed to open the browser regardless.
+	// Read errors are non-fatal; proceed to open the browser regardless.
 	_, _ = reader.ReadString('\n')
 	fmt.Fprintln(cmd.ErrOrStderr())
 

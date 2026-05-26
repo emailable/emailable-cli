@@ -18,14 +18,12 @@ type SaveOptions struct {
 	Path string
 	// ForceJSON forces JSON output regardless of file extension.
 	ForceJSON bool
-	// Stderr receives non-fatal notes (e.g. unrecognized extension warning).
-	// If nil, os.Stderr is used.
+	// Stderr receives non-fatal notes. nil means os.Stderr.
 	Stderr *os.File
 }
 
-// csvHeader is the canonical CSV column order used when flattening
-// VerifyResult records. Floats (like Duration) are intentionally skipped —
-// they're not useful in a spreadsheet.
+// csvHeader is the canonical CSV column order. Floats (like Duration) are
+// intentionally omitted — not useful in a spreadsheet.
 var csvHeader = []string{
 	"email", "state", "score", "reason", "domain",
 	"disposable", "accept_all", "role", "free",
@@ -36,20 +34,9 @@ var csvHeader = []string{
 // WriteResults writes v to opts.Path atomically (via .tmp + rename) and
 // returns the number of result rows written.
 //
-// Supported shapes:
-//   - *api.VerifyResult       — single result (JSON object, or 1-row CSV)
-//   - *api.BatchStatus        — batch with embedded emails
-//   - []api.VerifyResult      — explicit slice of results
-//   - *api.Account            — account info (JSON only; CSV falls back to JSON
-//     with a stderr note)
-//
-// Format selection:
-//   - opts.ForceJSON => JSON
-//   - extension .json => JSON
-//   - extension .csv  => CSV when v is flattenable; JSON otherwise (with note)
-//   - any other extension => JSON (with stderr note about unrecognized ext)
-//
-// Files are written with mode 0644.
+// Format selection: ForceJSON or a .json extension yields JSON; .csv yields
+// CSV when v is flattenable and JSON otherwise; any other extension yields
+// JSON. Non-JSON fallbacks emit a stderr note. Files are mode 0644.
 func WriteResults(v any, opts SaveOptions) (int, error) {
 	if opts.Path == "" {
 		return 0, fmt.Errorf("output path is required")
@@ -86,8 +73,8 @@ func WriteResults(v any, opts SaveOptions) (int, error) {
 	return writeJSON(v, opts.Path)
 }
 
-// flattenForCSV returns the VerifyResult rows extractable from v, and a
-// bool indicating whether v is a shape we can render as CSV at all.
+// flattenForCSV returns the rows extractable from v and whether v is a
+// CSV-renderable shape at all.
 func flattenForCSV(v any) ([]api.VerifyResult, bool) {
 	switch t := v.(type) {
 	case *api.VerifyResult:
@@ -111,8 +98,8 @@ func flattenForCSV(v any) ([]api.VerifyResult, bool) {
 	}
 }
 
-// resultCount mirrors flattenForCSV's row count for the JSON path so the
-// caller can print "Saved N results" consistently regardless of format.
+// resultCount returns the row count for the JSON path so callers can print
+// "Saved N results" consistently regardless of format.
 func resultCount(v any) int {
 	switch t := v.(type) {
 	case *api.VerifyResult:
@@ -132,9 +119,8 @@ func resultCount(v any) int {
 	case []api.VerifyResult:
 		return len(t)
 	default:
-		// Unknown shapes (e.g. *api.Account): we don't have a row count to
-		// report. Return 0 and let callers reword their success message
-		// accordingly ("Saved to <file>" instead of "Saved N results...").
+		// No row count for unknown shapes; callers reword their success
+		// message ("Saved to <file>") accordingly.
 		return 0
 	}
 }
@@ -144,8 +130,7 @@ func writeJSON(v any, path string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("marshal json: %w", err)
 	}
-	// MarshalIndent doesn't append a trailing newline; add one for POSIX
-	// friendliness.
+	// Trailing newline for POSIX friendliness.
 	data = append(data, '\n')
 	if err := atomicWrite(path, data); err != nil {
 		return 0, err
@@ -160,8 +145,7 @@ func writeCSV(rows []api.VerifyResult, path string) (int, error) {
 		return 0, fmt.Errorf("create %s: %w", tmp, err)
 	}
 	// Best-effort cleanup of the tmp file if anything below fails before
-	// rename. After a successful rename the tmp path no longer exists, so
-	// Remove there is a no-op.
+	// rename.
 	cleanup := true
 	defer func() {
 		if cleanup {
