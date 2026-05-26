@@ -325,9 +325,7 @@ func readTXTReader(r io.Reader) ([]string, error) {
 	}
 	var out []string
 	for _, line := range strings.Split(string(data), "\n") {
-		for _, part := range strings.Split(line, ",") {
-			out = append(out, part)
-		}
+		out = append(out, strings.Split(line, ",")...)
 	}
 	return out, nil
 }

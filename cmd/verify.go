@@ -20,9 +20,9 @@ import (
 // through to whatever server-side default is current.
 func newVerifyCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:          "verify EMAIL",
-		Short:        "Verify a single email in real time",
-		Long:         "Verify a single email in real time. For multiple emails or a file, use `emailable batch verify`.",
+		Use:   "verify EMAIL",
+		Short: "Verify a single email in real time",
+		Long:  "Verify a single email in real time. For multiple emails or a file, use `emailable batch verify`.",
 		Example: `  # Verify a single email
   emailable verify hello@example.com
 
@@ -120,4 +120,3 @@ func verifyOptionsFromFlags(cmd *cobra.Command) (*api.VerifyOptions, error) {
 	}
 	return opts, nil
 }
-

@@ -10,6 +10,17 @@ linters:
     - govet          # the same checks as `go vet`
     - ineffassign    # detect ineffective assignments
     - staticcheck    # comprehensive static analysis (also subsumes gosimple, unused)
+  settings:
+    errcheck:
+      # Skip idiomatic fire-and-forget calls: writes to stderr/spinner/progress
+      # bars and deferred Close() calls. Checking these adds noise without
+      # catching real bugs.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Closer).Close
+        - (*os.File).Close
 
 formatters:
   enable:
