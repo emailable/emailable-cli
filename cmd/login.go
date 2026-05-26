@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/emailable/emailable-cli/internal/api"
-	"github.com/emailable/emailable-cli/internal/config"
+	"github.com/emailable/emailable-cli/internal/credentials"
 	"github.com/emailable/emailable-cli/internal/oauth"
 	"github.com/emailable/emailable-cli/internal/output"
 	"github.com/emailable/emailable-cli/internal/ui"
@@ -52,8 +52,8 @@ func newLoginCmd() *cobra.Command {
 //
 //   - API key (non-interactive): if `--api-key VALUE` is set, or stdin is
 //     piped (e.g. `op read ... | emailable login`), the key is persisted
-//     to config.yml and validated against /v1/account to fetch the owner
-//     email. No OAuth round-trip happens.
+//     to the credentials file and validated against /v1/account to fetch
+//     the owner email. No OAuth round-trip happens.
 //   - OAuth device flow (interactive): the default — request a device
 //     code, prompt the user to authorize in the browser, poll for the
 //     access_token, persist credentials, fetch the owner email.
@@ -112,32 +112,32 @@ func runLoginE(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("login: %w", err)
 	}
 
-	cfg := &config.Config{
+	creds := &credentials.Credentials{
 		AccessToken:  tok.AccessToken,
 		RefreshToken: tok.RefreshToken,
 	}
 	if tok.ExpiresIn > 0 {
-		cfg.ExpiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
+		creds.ExpiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
 	}
-	if err := cfg.Save(ctx.ConfigPath); err != nil {
+	if err := creds.Save(ctx.CredentialsPath); err != nil {
 		return err
 	}
 
 	// Best-effort fetch of the owner email so the success line is
 	// personalized. A failure here doesn't undo the login — the token is
 	// already on disk above — we just fall back to a generic message.
-	apiClient := api.New(ctx.Env.APIBaseURL, cfg.AccessToken, nil)
+	apiClient := api.New(ctx.Env.APIBaseURL, creds.AccessToken, nil)
 	acc, accErr := apiClient.Account(cmd.Context())
 	h := &output.Human{W: cmd.OutOrStdout(), Quiet: ctx.Quiet}
 	if accErr == nil && acc != nil {
-		cfg.OwnerEmail = acc.OwnerEmail
-		if saveErr := cfg.Save(ctx.ConfigPath); saveErr != nil {
+		creds.OwnerEmail = acc.OwnerEmail
+		if saveErr := creds.Save(ctx.CredentialsPath); saveErr != nil {
 			// Login succeeded; the second save (adding owner_email) is a
 			// best-effort enhancement. Surface a dimmed note so the user
-			// knows their config is slightly incomplete without aborting
-			// the login flow.
+			// knows their credentials file is slightly incomplete without
+			// aborting the login flow.
 			noticeW := &output.Human{W: cmd.ErrOrStderr(), Quiet: ctx.Quiet}
-			_ = noticeW.Notice(fmt.Sprintf("Couldn't update owner_email in config: %v", saveErr))
+			_ = noticeW.Notice(fmt.Sprintf("Couldn't update owner_email in credentials: %v", saveErr))
 		}
 		return h.Success(fmt.Sprintf("Logged in as %s", acc.OwnerEmail))
 	}
@@ -171,10 +171,11 @@ func apiKeyForLogin() (string, bool) {
 	return "", false
 }
 
-// loginWithAPIKey persists key to config.yml, then calls /v1/account to
-// validate it and grab the owner email. A bad key surfaces as whatever
-// /v1/account returns (typically a 401 with code=not_authenticated) — we
-// don't write the key to disk until we know it works.
+// loginWithAPIKey persists key to the credentials file, then calls
+// /v1/account to validate it and grab the owner email. A bad key surfaces
+// as whatever /v1/account returns (typically a 401 with
+// code=not_authenticated) — we don't write the key to disk until we know
+// it works.
 func loginWithAPIKey(cmd *cobra.Command, ctx *cmdCtx, key string) error {
 	// Validate first against /v1/account so a typo doesn't silently leave
 	// a broken key on disk.
@@ -184,18 +185,18 @@ func loginWithAPIKey(cmd *cobra.Command, ctx *cmdCtx, key string) error {
 		return err
 	}
 
-	cfg := ctx.Config
-	cfg.APIKey = key
+	creds := ctx.Credentials
+	creds.APIKey = key
 	// Saving a fresh API key supersedes any prior OAuth credentials; clear
 	// them so the auth source is unambiguous and so a later `logout`
 	// doesn't try to revoke a token the user has already abandoned.
-	cfg.AccessToken = ""
-	cfg.RefreshToken = ""
-	cfg.ExpiresAt = time.Time{}
+	creds.AccessToken = ""
+	creds.RefreshToken = ""
+	creds.ExpiresAt = time.Time{}
 	if acc != nil {
-		cfg.OwnerEmail = acc.OwnerEmail
+		creds.OwnerEmail = acc.OwnerEmail
 	}
-	if err := cfg.Save(ctx.ConfigPath); err != nil {
+	if err := creds.Save(ctx.CredentialsPath); err != nil {
 		return err
 	}
 

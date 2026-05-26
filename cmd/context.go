@@ -10,6 +10,7 @@ import (
 
 	"github.com/emailable/emailable-cli/internal/api"
 	"github.com/emailable/emailable-cli/internal/config"
+	"github.com/emailable/emailable-cli/internal/credentials"
 	"github.com/emailable/emailable-cli/internal/env"
 	"github.com/emailable/emailable-cli/internal/oauth"
 	"github.com/emailable/emailable-cli/internal/output"
@@ -29,19 +30,21 @@ const apiKeyEnv = "EMAILABLE_API_KEY"
 // the --debug flag. Any non-empty value turns it on.
 const debugEnv = "EMAILABLE_DEBUG"
 
-// outputEnv lets users default the global output format without threading
-// --json through every invocation. Recognized values:
-//
-//   - "json": equivalent to passing --json
-//   - "human" (or any other value): no effect
-//
-// An explicit --json or --json=false on the command line always wins; the
-// env var only fills in when the flag wasn't set.
-const outputEnv = "EMAILABLE_OUTPUT"
-
 // cmdCtx is the shared bag of state every command needs: active environment,
-// loaded config, persistent flags. Commands grab one via newCmdCtx() in their
+// loaded files, persistent flags. Commands grab one via newCmdCtx() in their
 // RunE.
+//
+// File layout:
+//
+//   - Credentials / CredentialsPath: the global credentials file (env-suffixed
+//     by the resolved env name). Login writes here, logout clears here, OAuth
+//     refresh saves here. Holds api_key and the OAuth token bundle.
+//   - GlobalConfigPath / ProjectConfigPath: the two scopes of the non-secret
+//     config file. URLs only; both are user-managed (the CLI never writes
+//     them). Surfaced for `emailable status` and diagnostics.
+//
+// Per-project API keys are deliberately NOT a file: use EMAILABLE_API_KEY
+// instead.
 //
 // JSONMode and Quiet are populated from the persistent flag state at the
 // time the cmdCtx is built. Commands should prefer reading these fields
@@ -49,11 +52,15 @@ const outputEnv = "EMAILABLE_OUTPUT"
 // command-local helper (e.g. applyStreamImplications) overrides the effective
 // value for its caller.
 type cmdCtx struct {
-	Env        *env.Environment
-	ConfigPath string
-	Config     *config.Config
-	JSONMode   bool
-	Quiet      bool
+	Env             *env.Environment
+	CredentialsPath string
+	Credentials     *credentials.Credentials
+
+	GlobalConfigPath  string
+	ProjectConfigPath string
+
+	JSONMode bool
+	Quiet    bool
 
 	// refreshNoticeWriter, when non-nil, receives a short stderr message the
 	// first time requireAuth performs an OAuth refresh during this command's
@@ -78,9 +85,11 @@ func newCmdCtxFor(cmd *cobra.Command, jsonMode bool) (*cmdCtx, error) {
 	return c.withRefreshNotice(cmd.ErrOrStderr()), nil
 }
 
-// newCmdCtx resolves the active environment, computes the credentials file
-// path, and loads (or returns empty) the config. Does not enforce that the
-// user is logged in — that's the per-command's job via requireAuth.
+// newCmdCtx resolves the active environment, locates the credentials and
+// config files, and loads the credentials (config files are inspected by
+// env.Current and don't need to be retained on the context). Does not
+// enforce that the user is logged in — that's the per-command's job via
+// requireAuth.
 //
 // Quiet is read off the package-level flag global at call time (cobra has
 // already populated it by the time any RunE fires) so callers only need to
@@ -90,20 +99,24 @@ func newCmdCtx(jsonMode bool) (*cmdCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	path, err := config.DefaultPath(e.Name)
+	credPath, err := credentials.DefaultPath(e.Name)
 	if err != nil {
-		return nil, fmt.Errorf("resolve config path: %w", err)
+		return nil, fmt.Errorf("resolve credentials path: %w", err)
 	}
-	cfg, err := config.Load(path)
+	creds, err := credentials.Load(credPath)
 	if err != nil {
 		return nil, err
 	}
+	globalConfigPath, _ := config.DefaultPath()
+	projectConfigPath, _ := env.ProjectConfigPath()
 	return &cmdCtx{
-		Env:        e,
-		ConfigPath: path,
-		Config:     cfg,
-		JSONMode:   jsonMode,
-		Quiet:      quietMode,
+		Env:               e,
+		CredentialsPath:   credPath,
+		Credentials:       creds,
+		GlobalConfigPath:  globalConfigPath,
+		ProjectConfigPath: projectConfigPath,
+		JSONMode:          jsonMode,
+		Quiet:             quietMode,
 	}, nil
 }
 
@@ -113,7 +126,7 @@ func newCmdCtx(jsonMode bool) (*cmdCtx, error) {
 // There's no flag-source variant on purpose: --api-key only exists on the
 // `login` subcommand, where it triggers a save rather than a per-call
 // override. By the time any other command runs, the key has either been
-// promoted to the stored config or it isn't going to be used.
+// promoted to the stored credentials or it isn't going to be used.
 type apiKeySource string
 
 const (
@@ -126,14 +139,14 @@ const (
 
 // effectiveAPIKey returns the API key the CLI will use for the next
 // request, along with a label describing its source. Resolution order:
-// EMAILABLE_API_KEY env, then the stored config.APIKey. Empty key +
+// EMAILABLE_API_KEY env, then the stored Credentials.APIKey. Empty key +
 // apiKeySourceNone when no key is configured.
 func (c *cmdCtx) effectiveAPIKey() (string, apiKeySource) {
 	if v := os.Getenv(apiKeyEnv); v != "" {
 		return v, apiKeySourceEnv
 	}
-	if c.Config.APIKey != "" {
-		return c.Config.APIKey, apiKeySourceStored
+	if c.Credentials.APIKey != "" {
+		return c.Credentials.APIKey, apiKeySourceStored
 	}
 	return "", apiKeySourceNone
 }
@@ -157,7 +170,8 @@ func (c *cmdCtx) withRefreshNotice(w io.Writer) *cmdCtx {
 
 // requireAuth returns an *api.Client configured for the active environment.
 // Resolution order:
-//  1. EMAILABLE_API_KEY / --api-key — non-interactive auth; no refresh path.
+//  1. EMAILABLE_API_KEY / stored API key — non-interactive auth; no refresh
+//     path.
 //  2. Stored OAuth access token — refreshed transparently when close to
 //     expiry. A failed refresh caused by a permanently-dead refresh token
 //     (oauth.ErrInvalidGrant) collapses to errNotAuthenticated so the user
@@ -168,7 +182,7 @@ func (c *cmdCtx) requireAuth() (*api.Client, error) {
 	if key, _ := c.effectiveAPIKey(); key != "" {
 		return api.NewWithOptions(c.Env.APIBaseURL, key, c.clientOptions()), nil
 	}
-	if c.Config.AccessToken == "" {
+	if c.Credentials.AccessToken == "" {
 		return nil, errNotAuthenticated
 	}
 	if c.needsRefresh() {
@@ -179,7 +193,7 @@ func (c *cmdCtx) requireAuth() (*api.Client, error) {
 			return nil, err
 		}
 	}
-	return api.NewWithOptions(c.Env.APIBaseURL, c.Config.AccessToken, c.clientOptions()), nil
+	return api.NewWithOptions(c.Env.APIBaseURL, c.Credentials.AccessToken, c.clientOptions()), nil
 }
 
 // clientOptions returns the api.Options used by requireAuth — currently
@@ -190,33 +204,33 @@ func (c *cmdCtx) clientOptions() api.Options {
 
 // needsRefresh reports whether the stored access token is expired or close
 // enough to expiry that we should refresh before the next request. Returns
-// false when ExpiresAt is unset (older configs without expiry tracking) so
-// we don't refresh-loop on tokens that have no known TTL.
+// false when ExpiresAt is unset (older credentials without expiry tracking)
+// so we don't refresh-loop on tokens that have no known TTL.
 func (c *cmdCtx) needsRefresh() bool {
-	if c.Config.RefreshToken == "" || c.Config.ExpiresAt.IsZero() {
+	if c.Credentials.RefreshToken == "" || c.Credentials.ExpiresAt.IsZero() {
 		return false
 	}
-	return time.Now().Add(refreshSkew).After(c.Config.ExpiresAt)
+	return time.Now().Add(refreshSkew).After(c.Credentials.ExpiresAt)
 }
 
 // refresh exchanges the stored refresh_token for a fresh access_token,
-// updates c.Config in place, and persists the new credentials to disk. When
+// updates c.Credentials in place, and persists to disk. When
 // refreshNoticeWriter is non-nil, prints a short dimmed line so an attentive
 // user sees that a refresh happened during their command.
 func (c *cmdCtx) refresh(ctx context.Context) error {
 	oc := oauth.NewClient(c.Env.OAuthBaseURL, c.Env.ClientID, nil)
-	tok, err := oc.Refresh(ctx, c.Config.RefreshToken)
+	tok, err := oc.Refresh(ctx, c.Credentials.RefreshToken)
 	if err != nil {
 		return err
 	}
-	c.Config.AccessToken = tok.AccessToken
+	c.Credentials.AccessToken = tok.AccessToken
 	if tok.RefreshToken != "" {
-		c.Config.RefreshToken = tok.RefreshToken
+		c.Credentials.RefreshToken = tok.RefreshToken
 	}
 	if tok.ExpiresIn > 0 {
-		c.Config.ExpiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
+		c.Credentials.ExpiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
 	}
-	if err := c.Config.Save(c.ConfigPath); err != nil {
+	if err := c.Credentials.Save(c.CredentialsPath); err != nil {
 		return err
 	}
 	if c.refreshNoticeWriter != nil {

@@ -1,60 +1,44 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
-func TestDefaultPath_Default_XDGConfigHome(t *testing.T) {
+func TestDefaultPath_XDGConfigHome(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/custom/config")
 
-	got, err := DefaultPath("default")
+	got, err := DefaultPath()
 	if err != nil {
 		t.Fatalf("DefaultPath: %v", err)
 	}
 
-	want := filepath.Join("/custom/config", "emailable", "config.yml")
+	want := filepath.Join("/custom/config", "emailable", "config.json")
 	if got != want {
 		t.Errorf("DefaultPath() = %q, want %q", got, want)
 	}
 }
 
-func TestDefaultPath_Custom_HomeFallback(t *testing.T) {
+func TestDefaultPath_HomeFallback(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", "/tmp/fake-home")
 
-	got, err := DefaultPath("custom")
+	got, err := DefaultPath()
 	if err != nil {
 		t.Fatalf("DefaultPath: %v", err)
 	}
 
-	want := filepath.Join("/tmp/fake-home", ".config", "emailable", "config.custom.yml")
+	want := filepath.Join("/tmp/fake-home", ".config", "emailable", "config.json")
 	if got != want {
 		t.Errorf("DefaultPath() = %q, want %q", got, want)
-	}
-}
-
-func TestDefaultPath_EmptyEnvTreatedAsDefault(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", "/custom/config")
-
-	got, err := DefaultPath("")
-	if err != nil {
-		t.Fatalf("DefaultPath: %v", err)
-	}
-
-	want := filepath.Join("/custom/config", "emailable", "config.yml")
-	if got != want {
-		t.Errorf("DefaultPath(\"\") = %q, want %q", got, want)
 	}
 }
 
 func TestLoad_FileNotExist(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "missing.yaml")
+	path := filepath.Join(t.TempDir(), "missing.json")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -63,125 +47,51 @@ func TestLoad_FileNotExist(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("Load returned a nil *Config for a missing file")
 	}
-	if cfg.AccessToken != "" {
-		t.Errorf("expected empty AccessToken on fresh config, got %q", cfg.AccessToken)
+	if cfg.APIURL != "" || cfg.OAuthURL != "" {
+		t.Errorf("expected empty config, got %+v", cfg)
 	}
 }
 
-func TestConfig_YAMLSchema(t *testing.T) {
-	cfg := Config{
-		AccessToken:  "test-access",
-		RefreshToken: "test-refresh",
-		ExpiresAt:    time.Date(2026, 5, 14, 15, 0, 0, 0, time.UTC),
-		OwnerEmail:   "user@example.com",
+func TestLoad_EmptyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
 	}
 
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	got := string(data)
-
-	wantSubstrings := []string{
-		"access_token: test-access",
-		"refresh_token: test-refresh",
-		"owner_email: user@example.com",
-	}
-	for _, want := range wantSubstrings {
-		if !strings.Contains(got, want) {
-			t.Errorf("expected YAML to contain %q, got:\n%s", want, got)
-		}
-	}
-}
-
-func TestConfig_OmitsEmptyFields(t *testing.T) {
-	cfg := Config{AccessToken: "only-this"}
-
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	got := string(data)
-
-	if !strings.Contains(got, "access_token: only-this") {
-		t.Errorf("expected access_token in output, got:\n%s", got)
-	}
-
-	omitted := []string{"refresh_token", "owner_email"}
-	for _, key := range omitted {
-		if strings.Contains(got, key+":") {
-			t.Errorf("expected %s to be omitted, got:\n%s", key, got)
-		}
-	}
-}
-
-func TestSaveLoad_RoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yml")
-
-	original := &Config{
-		AccessToken:  "access-123",
-		RefreshToken: "refresh-456",
-		ExpiresAt:    time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC),
-		OwnerEmail:   "user@example.com",
-	}
-
-	if err := original.Save(path); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	loaded, err := Load(path)
+	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-
-	if loaded.AccessToken != original.AccessToken {
-		t.Errorf("AccessToken: got %q, want %q", loaded.AccessToken, original.AccessToken)
-	}
-	if loaded.RefreshToken != original.RefreshToken {
-		t.Errorf("RefreshToken: got %q, want %q", loaded.RefreshToken, original.RefreshToken)
-	}
-	if loaded.OwnerEmail != original.OwnerEmail {
-		t.Errorf("OwnerEmail: got %q, want %q", loaded.OwnerEmail, original.OwnerEmail)
-	}
-	if !loaded.ExpiresAt.Equal(original.ExpiresAt) {
-		t.Errorf("ExpiresAt: got %v, want %v", loaded.ExpiresAt, original.ExpiresAt)
+	if cfg.APIURL != "" || cfg.OAuthURL != "" {
+		t.Errorf("expected empty config from zero-byte file, got %+v", cfg)
 	}
 }
 
-func TestSave_CreatesParentDir(t *testing.T) {
-	nested := filepath.Join(t.TempDir(), "nested", "deep", "dirs")
-	path := filepath.Join(nested, "config.yml")
-
-	cfg := &Config{AccessToken: "x"}
-	if err := cfg.Save(path); err != nil {
-		t.Fatalf("Save: %v", err)
+func TestLoad_ValidURLs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	body, _ := json.Marshal(&Config{
+		APIURL:   "https://api.example.test/v1",
+		OAuthURL: "https://app.example.test",
+	})
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
 	}
 
-	if _, err := os.Stat(path); err != nil {
-		t.Errorf("expected file at %s, got error: %v", path, err)
-	}
-}
-
-func TestSave_FilePerms(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yml")
-
-	cfg := &Config{AccessToken: "x"}
-	if err := cfg.Save(path); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	info, err := os.Stat(path)
+	cfg, err := Load(path)
 	if err != nil {
-		t.Fatalf("Stat: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Errorf("file perms: got %o, want 600", got)
+	if cfg.APIURL != "https://api.example.test/v1" {
+		t.Errorf("APIURL: got %q", cfg.APIURL)
+	}
+	if cfg.OAuthURL != "https://app.example.test" {
+		t.Errorf("OAuthURL: got %q", cfg.OAuthURL)
 	}
 }
 
-func TestLoad_MalformedYAML(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yml")
-	if err := os.WriteFile(path, []byte("not: valid: yaml: ::\n"), 0o600); err != nil {
+func TestLoad_MalformedJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte("{not valid json"), 0o644); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -194,70 +104,5 @@ func TestLoad_MalformedYAML(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), path) {
 		t.Errorf("expected error to include path %q, got %q", path, err.Error())
-	}
-}
-
-func TestSave_ReadOnlyParentDir(t *testing.T) {
-	parent := t.TempDir()
-	if err := os.Chmod(parent, 0o500); err != nil {
-		t.Fatalf("setup chmod: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chmod(parent, 0o700)
-	})
-
-	path := filepath.Join(parent, "subdir", "config.yml")
-	cfg := &Config{AccessToken: "x"}
-
-	err := cfg.Save(path)
-	if err == nil {
-		t.Fatal("expected Save to fail with read-only parent, got nil")
-	}
-	if !strings.Contains(err.Error(), "config:") {
-		t.Errorf("expected wrapped 'config:' error, got %q", err.Error())
-	}
-}
-
-func TestSave_NarrowsPermsOnExistingFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yml")
-
-	if err := os.WriteFile(path, []byte("access_token: existing\n"), 0o644); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	cfg := &Config{AccessToken: "new"}
-	if err := cfg.Save(path); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat: %v", err)
-	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Errorf("file perms after overwrite: got %o, want 600", got)
-	}
-}
-
-func TestClear_RemovesFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yml")
-
-	cfg := &Config{AccessToken: "x"}
-	if err := cfg.Save(path); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	if err := Clear(path); err != nil {
-		t.Fatalf("Clear: %v", err)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Errorf("expected file to be gone, stat err: %v", err)
-	}
-}
-
-func TestClear_MissingFileIsNoOp(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "never-existed.yaml")
-	if err := Clear(path); err != nil {
-		t.Errorf("Clear on missing file should be no-op, got: %v", err)
 	}
 }

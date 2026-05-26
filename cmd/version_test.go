@@ -132,7 +132,7 @@ func resetJSONFlag(t *testing.T) {
 // clearEnvOverrides forces env.Current() to resolve to "default" by zeroing
 // the URL override env vars AND chdir-ing into a sibling-less temp directory
 // for the test's lifetime. The chdir step is what suppresses discovery of
-// the repo-root .emailable.yml (which points at staging); without it the
+// the repo-root .emailable/config.json (which points at staging); without it the
 // "env" key would always show up as "custom" when the suite runs from a
 // checkout of this repo.
 func clearEnvOverrides(t *testing.T) {

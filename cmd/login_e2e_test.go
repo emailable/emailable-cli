@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/emailable/emailable-cli/internal/config"
+	"github.com/emailable/emailable-cli/internal/credentials"
 )
 
 // TestLogin_APIKey_HappyPath validates the --api-key path: the CLI calls
 // /v1/account to confirm the key works, persists the key + owner_email to
-// config, and surfaces a success message.
+// the credentials file, and surfaces a success message.
 func TestLogin_APIKey_HappyPath(t *testing.T) {
 	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/account" {
@@ -36,15 +36,15 @@ func TestLogin_APIKey_HappyPath(t *testing.T) {
 	}
 
 	// Verify persistence.
-	cfg, err := config.Load(env.ConfigPath)
+	creds, err := credentials.Load(env.CredentialsPath)
 	if err != nil {
-		t.Fatalf("load config: %v", err)
+		t.Fatalf("load credentials: %v", err)
 	}
-	if cfg.APIKey != "sk_login_xxx" {
-		t.Errorf("APIKey not saved: %+v", cfg)
+	if creds.APIKey != "sk_login_xxx" {
+		t.Errorf("APIKey not saved: %+v", creds)
 	}
-	if cfg.OwnerEmail != "owner@example.com" {
-		t.Errorf("OwnerEmail not saved: %+v", cfg)
+	if creds.OwnerEmail != "owner@example.com" {
+		t.Errorf("OwnerEmail not saved: %+v", creds)
 	}
 }
 
@@ -64,12 +64,12 @@ func TestLogin_APIKey_RejectedBy401(t *testing.T) {
 	}
 
 	// Key must NOT have landed on disk.
-	cfg, err := config.Load(env.ConfigPath)
+	creds, err := credentials.Load(env.CredentialsPath)
 	if err != nil {
-		t.Fatalf("load config: %v", err)
+		t.Fatalf("load credentials: %v", err)
 	}
-	if cfg.APIKey != "" {
-		t.Errorf("APIKey should not be persisted on validation failure, got %q", cfg.APIKey)
+	if creds.APIKey != "" {
+		t.Errorf("APIKey should not be persisted on validation failure, got %q", creds.APIKey)
 	}
 }
 
@@ -83,11 +83,11 @@ func TestLogin_APIKey_ClearsOAuth(t *testing.T) {
 		})
 	}))
 	// Pre-seed OAuth tokens.
-	prior := &config.Config{
+	prior := &credentials.Credentials{
 		AccessToken:  "stale_at",
 		RefreshToken: "stale_rt",
 	}
-	if err := prior.Save(env.ConfigPath); err != nil {
+	if err := prior.Save(env.CredentialsPath); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -96,15 +96,15 @@ func TestLogin_APIKey_ClearsOAuth(t *testing.T) {
 		t.Fatalf("execute: %v", res.Err)
 	}
 
-	cfg, err := config.Load(env.ConfigPath)
+	creds, err := credentials.Load(env.CredentialsPath)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.APIKey != "sk_new" {
-		t.Errorf("APIKey: got %q", cfg.APIKey)
+	if creds.APIKey != "sk_new" {
+		t.Errorf("APIKey: got %q", creds.APIKey)
 	}
-	if cfg.AccessToken != "" || cfg.RefreshToken != "" {
-		t.Errorf("expected OAuth tokens to be cleared, got %+v", cfg)
+	if creds.AccessToken != "" || creds.RefreshToken != "" {
+		t.Errorf("expected OAuth tokens to be cleared, got %+v", creds)
 	}
 }
 

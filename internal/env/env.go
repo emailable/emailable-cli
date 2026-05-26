@@ -1,17 +1,31 @@
-// Package env resolves the API host, OAuth host, and OAuth client_id the CLI
-// talks to. Defaults to production. Override at runtime by either:
+// Package env resolves the active runtime configuration: backend URLs and
+// output format defaults.
 //
-//   - Setting both EMAILABLE_API_URL and EMAILABLE_OAUTH_URL env vars (e.g.
-//     via direnv, CI, or an inline export), or
-//   - Dropping a .emailable.yml in the project root (or any ancestor up to
-//     the user's home directory) with api_url and oauth_url keys.
+// These live in a config.Config layered across three sources, in descending
+// precedence:
 //
-// Env vars take precedence over the project config file.
+//   - Environment variables (EMAILABLE_API_URL, EMAILABLE_OAUTH_URL,
+//     EMAILABLE_OUTPUT).
+//   - Project file at <project>/.emailable/config.json, discovered by
+//     walking up from the current working directory.
+//   - Global file at $XDG_CONFIG_HOME/emailable/config.json.
+//
+// All three use the same config.Config schema. Within a single source the
+// API/OAuth URLs must be set together. Per-field, higher-precedence
+// sources override lower-precedence ones.
+//
+// The update-notifier opt-out (EMAILABLE_NO_UPDATE_NOTIFIER) is deliberately
+// not part of config.Config and not merged here — it's read straight from the
+// environment by UpdateNotifierOptOut so a malformed config file can't
+// override the user's explicit opt-out.
 package env
 
 import (
 	"fmt"
 	"os"
+	"strings"
+
+	"github.com/emailable/emailable-cli/internal/config"
 )
 
 const (
@@ -22,61 +36,121 @@ const (
 
 	DefaultAPIBaseURL   = "https://api.emailable.com/v1"
 	DefaultOAuthBaseURL = "https://app.emailable.com"
+
+	envAPIURL         = "EMAILABLE_API_URL"
+	envOAuthURL       = "EMAILABLE_OAUTH_URL"
+	envOutput         = "EMAILABLE_OUTPUT"
+	envOptOutNotifier = "EMAILABLE_NO_UPDATE_NOTIFIER"
 )
 
 // Environment holds the active host configuration.
 type Environment struct {
 	// Name is "default" for production endpoints, "custom" when overridden via
-	// env vars. Used to suffix the credentials file so tokens for different
-	// backends don't collide.
+	// env vars, project file, or global file. Used to suffix the credentials
+	// file so tokens for different backends don't collide.
 	Name         string
 	APIBaseURL   string
 	OAuthBaseURL string
 	ClientID     string
 }
 
-// Current resolves the active environment.
+// MergedConfig returns the config that results from layering, per field:
+// env vars (highest) > project file > global file > zero value (lowest).
 //
-// Resolution order (high → low precedence):
-//  1. EMAILABLE_API_URL + EMAILABLE_OAUTH_URL env vars.
-//  2. .emailable.yml discovered by walking up from the current working
-//     directory to the user's home directory.
-//  3. Built-in production defaults.
-//
-// Setting only one of the two URLs (in either source) is an error.
-func Current() (*Environment, error) {
-	api := os.Getenv("EMAILABLE_API_URL")
-	oauth := os.Getenv("EMAILABLE_OAUTH_URL")
+// Within a single source, the api_url/oauth_url pair must be both-set or
+// both-empty — partial sources are a configuration error.
+func MergedConfig() (*config.Config, error) {
+	merged := &config.Config{}
 
-	// Env vars take precedence over the project config file. Only consult
-	// the file when neither env var is set — partial env-var overrides
-	// (one set, one not) should error rather than silently mix sources.
-	if api == "" && oauth == "" {
-		if path, ok := findProjectConfigFromCWD(); ok {
-			a, o, err := loadProjectConfig(path)
-			if err != nil {
-				return nil, fmt.Errorf("env: load %s: %w", path, err)
-			}
-			api = a
-			oauth = o
+	// Global file (lowest precedence).
+	globalPath, err := config.DefaultPath()
+	if err == nil {
+		g, loadErr := config.Load(globalPath)
+		if loadErr != nil {
+			return nil, fmt.Errorf("env: load %s: %w", globalPath, loadErr)
 		}
+		if (g.APIURL == "") != (g.OAuthURL == "") {
+			return nil, fmt.Errorf("env: %s: api_url and oauth_url must both be set", globalPath)
+		}
+		applyOver(merged, g)
 	}
 
-	if api == "" && oauth == "" {
+	// Project file overrides global.
+	if path, ok := findProjectConfigFromCWD(); ok {
+		p, err := loadProjectConfig(path)
+		if err != nil {
+			return nil, fmt.Errorf("env: load %s: %w", path, err)
+		}
+		applyOver(merged, p)
+	}
+
+	// Env vars override files.
+	envAPI := os.Getenv(envAPIURL)
+	envOAuthV := os.Getenv(envOAuthURL)
+	if envAPI != "" || envOAuthV != "" {
+		if envAPI == "" || envOAuthV == "" {
+			return nil, fmt.Errorf("emailable: %s and %s must both be set", envAPIURL, envOAuthURL)
+		}
+		merged.APIURL = envAPI
+		merged.OAuthURL = envOAuthV
+	}
+	if v := os.Getenv(envOutput); v != "" {
+		merged.Output = strings.ToLower(v)
+	}
+
+	return merged, nil
+}
+
+// applyOver overlays src onto dst — non-zero fields in src win.
+func applyOver(dst, src *config.Config) {
+	if src.APIURL != "" {
+		dst.APIURL = src.APIURL
+	}
+	if src.OAuthURL != "" {
+		dst.OAuthURL = src.OAuthURL
+	}
+	if src.Output != "" {
+		dst.Output = src.Output
+	}
+}
+
+// Current resolves the active environment from the merged config.
+func Current() (*Environment, error) {
+	merged, err := MergedConfig()
+	if err != nil {
+		return nil, err
+	}
+	if merged.APIURL != "" {
 		return &Environment{
-			Name:         "default",
-			APIBaseURL:   DefaultAPIBaseURL,
-			OAuthBaseURL: DefaultOAuthBaseURL,
+			Name:         "custom",
+			APIBaseURL:   merged.APIURL,
+			OAuthBaseURL: merged.OAuthURL,
 			ClientID:     PublicClientID,
 		}, nil
 	}
-	if api == "" || oauth == "" {
-		return nil, fmt.Errorf("emailable: api_url and oauth_url must both be set (via env vars or .emailable.yml)")
-	}
 	return &Environment{
-		Name:         "custom",
-		APIBaseURL:   api,
-		OAuthBaseURL: oauth,
+		Name:         "default",
+		APIBaseURL:   DefaultAPIBaseURL,
+		OAuthBaseURL: DefaultOAuthBaseURL,
 		ClientID:     PublicClientID,
 	}, nil
+}
+
+// UpdateNotifierOptOut reports whether EMAILABLE_NO_UPDATE_NOTIFIER is set
+// to a truthy value. Exposed separately from MergedConfig so callers can
+// honor the env var even when config-file parsing fails — a corrupt config
+// must not override the user's explicit opt-out.
+func UpdateNotifierOptOut() bool {
+	return isTruthy(os.Getenv(envOptOutNotifier))
+}
+
+// isTruthy returns true for "1", "true", "yes", "on" (case-insensitive).
+// Empty / "0" / "false" return false. Matches the convention used by the
+// updater package for opt-out env vars.
+func isTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }

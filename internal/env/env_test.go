@@ -28,7 +28,7 @@ func chdir(t *testing.T, dir string) {
 }
 
 // isolateHome points HOME at a fresh temp dir so findProjectConfigFromCWD
-// can't pick up the developer's real ~/.emailable.yml during tests.
+// can't pick up the developer's real ~/.emailable/config.json during tests.
 func isolateHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
@@ -38,7 +38,10 @@ func isolateHome(t *testing.T) string {
 
 func writeProjectConfig(t *testing.T, dir, body string) string {
 	t.Helper()
-	path := filepath.Join(dir, ".emailable.yml")
+	path := filepath.Join(dir, projectConfigDir, projectConfigFilename)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -147,7 +150,7 @@ func TestCurrent_ProjectConfigCustom(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	writeProjectConfig(t, proj,
-		"api_url: https://api.example.test/v1\noauth_url: https://app.example.test\n")
+		`{"api_url":"https://api.example.test/v1","oauth_url":"https://app.example.test"}`)
 	chdir(t, proj)
 
 	e, err := Current()
@@ -174,7 +177,7 @@ func TestCurrent_EnvVarsWinOverProjectConfig(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	writeProjectConfig(t, proj,
-		"api_url: https://file.api.test/v1\noauth_url: https://file.oauth.test\n")
+		`{"api_url":"https://file.api.test/v1","oauth_url":"https://file.oauth.test"}`)
 	chdir(t, proj)
 
 	e, err := Current()
@@ -197,7 +200,7 @@ func TestCurrent_ProjectConfigHalfSetErrors(t *testing.T) {
 	if err := os.MkdirAll(proj, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	writeProjectConfig(t, proj, "api_url: https://only.api.test/v1\n")
+	writeProjectConfig(t, proj, `{"api_url":"https://only.api.test/v1"}`)
 	chdir(t, proj)
 
 	_, err := Current()
@@ -217,14 +220,14 @@ func TestCurrent_ProjectConfigMalformedErrors(t *testing.T) {
 	if err := os.MkdirAll(proj, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	writeProjectConfig(t, proj, "api_url: [unterminated\n")
+	writeProjectConfig(t, proj, `{"api_url": [unterminated`)
 	chdir(t, proj)
 
 	_, err := Current()
 	if err == nil {
 		t.Fatal("expected error for malformed project config")
 	}
-	if !strings.Contains(err.Error(), ".emailable.yml") {
+	if !strings.Contains(err.Error(), projectConfigFilename) {
 		t.Errorf("error %q should reference the offending file path", err.Error())
 	}
 }
@@ -239,7 +242,7 @@ func TestCurrent_ProjectConfigWalksUp(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	writeProjectConfig(t, proj,
-		"api_url: https://walk.api.test/v1\noauth_url: https://walk.oauth.test\n")
+		`{"api_url":"https://walk.api.test/v1","oauth_url":"https://walk.oauth.test"}`)
 	chdir(t, deep)
 
 	e, err := Current()
@@ -268,5 +271,133 @@ func TestCurrent_EmptyProjectConfigFallsThroughToDefault(t *testing.T) {
 	}
 	if e.Name != "default" {
 		t.Errorf("empty project config should yield default env; got %q", e.Name)
+	}
+}
+
+func TestMergedConfig_OutputFromGlobal(t *testing.T) {
+	t.Setenv("EMAILABLE_API_URL", "")
+	t.Setenv("EMAILABLE_OAUTH_URL", "")
+	t.Setenv("EMAILABLE_OUTPUT", "")
+	home := isolateHome(t)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	chdir(t, home)
+
+	writeFile := func(t *testing.T, path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	writeFile(t, filepath.Join(home, ".config", "emailable", "config.json"),
+		`{"output":"json"}`)
+
+	merged, err := MergedConfig()
+	if err != nil {
+		t.Fatalf("MergedConfig: %v", err)
+	}
+	if merged.Output != "json" {
+		t.Errorf("Output: got %q, want json", merged.Output)
+	}
+}
+
+func TestMergedConfig_ProjectOutputOverridesGlobal(t *testing.T) {
+	t.Setenv("EMAILABLE_API_URL", "")
+	t.Setenv("EMAILABLE_OAUTH_URL", "")
+	t.Setenv("EMAILABLE_OUTPUT", "")
+	home := isolateHome(t)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	writeFile := func(t *testing.T, path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	writeFile(t, filepath.Join(home, ".config", "emailable", "config.json"),
+		`{"output":"json"}`)
+	proj := filepath.Join(home, "proj")
+	writeProjectConfig(t, proj, `{"output":"human"}`)
+	chdir(t, proj)
+
+	merged, err := MergedConfig()
+	if err != nil {
+		t.Fatalf("MergedConfig: %v", err)
+	}
+	if merged.Output != "human" {
+		t.Errorf("Output: project should override global; got %q", merged.Output)
+	}
+}
+
+func TestMergedConfig_EnvOutputOverridesFile(t *testing.T) {
+	t.Setenv("EMAILABLE_API_URL", "")
+	t.Setenv("EMAILABLE_OAUTH_URL", "")
+	t.Setenv("EMAILABLE_OUTPUT", "JSON")
+	home := isolateHome(t)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	chdir(t, home)
+
+	merged, err := MergedConfig()
+	if err != nil {
+		t.Fatalf("MergedConfig: %v", err)
+	}
+	if merged.Output != "json" {
+		t.Errorf("Output: env should win and be lowercased; got %q", merged.Output)
+	}
+}
+
+func TestUpdateNotifierOptOut(t *testing.T) {
+	cases := []struct {
+		val  string
+		want bool
+	}{
+		{"", false},
+		{"0", false},
+		{"false", false},
+		{"1", true},
+		{"true", true},
+		{"YES", true},
+		{"on", true},
+	}
+	for _, c := range cases {
+		t.Run(c.val, func(t *testing.T) {
+			t.Setenv("EMAILABLE_NO_UPDATE_NOTIFIER", c.val)
+			if got := UpdateNotifierOptOut(); got != c.want {
+				t.Errorf("UpdateNotifierOptOut(%q) = %v, want %v", c.val, got, c.want)
+			}
+		})
+	}
+}
+
+// TestUpdateNotifierOptOut_BypassesConfigParseFailure asserts that a
+// corrupt config file does not silently re-enable the notifier for a user
+// who set EMAILABLE_NO_UPDATE_NOTIFIER. The env var is the explicit signal
+// and must always be honored.
+func TestUpdateNotifierOptOut_BypassesConfigParseFailure(t *testing.T) {
+	t.Setenv("EMAILABLE_API_URL", "")
+	t.Setenv("EMAILABLE_OAUTH_URL", "")
+	t.Setenv("EMAILABLE_NO_UPDATE_NOTIFIER", "1")
+	home := isolateHome(t)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	chdir(t, home)
+
+	path := filepath.Join(home, ".config", "emailable", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("{garbage"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if _, err := MergedConfig(); err == nil {
+		t.Fatal("expected MergedConfig to error on garbage file")
+	}
+	if !UpdateNotifierOptOut() {
+		t.Error("UpdateNotifierOptOut should still report true from the env var")
 	}
 }

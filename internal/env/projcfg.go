@@ -5,23 +5,20 @@ import (
 	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
+	"github.com/emailable/emailable-cli/internal/config"
 )
 
-// projectConfigFilename is the name of the project-local config file the CLI
-// looks for. It's intentionally dotfile-prefixed so it sorts with other
-// per-repo config (.envrc, .gitignore) and is easy to gitignore.
-const projectConfigFilename = ".emailable.yml"
+// Project-local config lives at <dir>/.emailable/config.json. Mirrors the
+// global config layout ($XDG_CONFIG_HOME/emailable/config.json) — both share
+// the same schema (config.Config). The dotfile-prefixed dir keeps it tidy
+// in repo roots (like .github/, .vscode/) and avoids colliding with the many
+// unrelated tools that ship a bare config.json.
+const (
+	projectConfigDir      = ".emailable"
+	projectConfigFilename = "config.json"
+)
 
-// projectConfig is the on-disk schema for .emailable.yml. Both fields are
-// optional individually but must be set together — loadProjectConfig enforces
-// that.
-type projectConfig struct {
-	APIURL   string `yaml:"api_url"`
-	OAuthURL string `yaml:"oauth_url"`
-}
-
-// findProjectConfig walks up from startDir looking for .emailable.yml.
+// findProjectConfig walks up from startDir looking for .emailable/config.json.
 // Returns (path, found) where found=false means we walked all the way to the
 // stopping point without finding the file.
 //
@@ -34,17 +31,14 @@ type projectConfig struct {
 // stopAt is a parameter (rather than always being $HOME) so tests can
 // inject a sandbox root.
 func findProjectConfig(startDir, stopAt string) (string, bool) {
-	// Normalize so the equality check below is reliable.
 	startDir = filepath.Clean(startDir)
 	stopAt = filepath.Clean(stopAt)
 
-	// Decide where to stop. If startDir is inside stopAt, stop at stopAt
-	// (inclusive). Otherwise, walk all the way to the filesystem root.
 	stopInclusive := isDescendantOrEqual(startDir, stopAt)
 
 	dir := startDir
 	for {
-		candidate := filepath.Join(dir, projectConfigFilename)
+		candidate := filepath.Join(dir, projectConfigDir, projectConfigFilename)
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return candidate, true
 		}
@@ -55,7 +49,6 @@ func findProjectConfig(startDir, stopAt string) (string, bool) {
 
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			// Reached filesystem root.
 			return "", false
 		}
 		dir = parent
@@ -72,46 +65,43 @@ func isDescendantOrEqual(child, parent string) bool {
 	if err != nil {
 		return false
 	}
-	// filepath.Rel returns ".." or paths starting with "../" when child
-	// escapes parent.
 	if rel == ".." || len(rel) >= 3 && rel[:3] == ".."+string(filepath.Separator) {
 		return false
 	}
 	return true
 }
 
-// loadProjectConfig parses a discovered .emailable.yml file. Returns the
-// api_url and oauth_url, or an error if the file is malformed or only one
-// of the two URLs is set (they must be set together, matching the env-var
-// rule).
-func loadProjectConfig(path string) (apiURL, oauthURL string, err error) {
-	data, err := os.ReadFile(path)
+// loadProjectConfig parses a discovered .emailable/config.json file using the
+// shared config.Config schema. Returns the loaded config, or an error if the
+// file is malformed or has only one of the two URLs set (they must be set
+// together within a single file, matching the env-var rule).
+func loadProjectConfig(path string) (*config.Config, error) {
+	cfg, err := config.Load(path)
 	if err != nil {
-		return "", "", fmt.Errorf("read: %w", err)
+		return nil, err
 	}
 
-	var cfg projectConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return "", "", fmt.Errorf("parse yaml: %w", err)
+	// Half-set URLs within a single file are a user mistake; both must be
+	// set together. env.MergedConfig enforces the same rule on the global
+	// file, so a half-set source can never silently mix with another.
+	if (cfg.APIURL == "") != (cfg.OAuthURL == "") {
+		return nil, fmt.Errorf("api_url and oauth_url must both be set")
 	}
 
-	// Empty file → treat as "nothing configured here", caller will fall
-	// through to defaults. Half-set → error, matches env-var semantics.
-	if cfg.APIURL == "" && cfg.OAuthURL == "" {
-		return "", "", nil
-	}
-	if cfg.APIURL == "" || cfg.OAuthURL == "" {
-		return "", "", fmt.Errorf("api_url and oauth_url must both be set")
-	}
-
-	return cfg.APIURL, cfg.OAuthURL, nil
+	return cfg, nil
 }
 
-// findProjectConfigFromCWD is the production wrapper around findProjectConfig:
-// it resolves os.Getwd() and the user's home directory and delegates. Returns
-// found=false (without error) if either lookup fails — a missing cwd or
-// unknown home shouldn't crash the CLI, it should just mean "no project
-// config available".
+// ProjectConfigPath finds the project-local .emailable/config.json by
+// walking up from the current working directory. Returns ("", false) when
+// none was found. The returned path is suitable to pass to config.Load.
+func ProjectConfigPath() (string, bool) {
+	return findProjectConfigFromCWD()
+}
+
+// findProjectConfigFromCWD resolves os.Getwd() and the user's home directory
+// and delegates to findProjectConfig. Returns found=false (without error) if
+// either lookup fails — a missing cwd or unknown home shouldn't crash the
+// CLI, it should just mean "no project config available".
 func findProjectConfigFromCWD() (string, bool) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -119,8 +109,6 @@ func findProjectConfigFromCWD() (string, bool) {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		// Fall back to root so we still walk the tree, just without the
-		// home-dir stopping point.
 		home = string(filepath.Separator)
 	}
 	return findProjectConfig(cwd, home)
