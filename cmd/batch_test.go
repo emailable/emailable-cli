@@ -8,10 +8,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// End-to-end testing of batch subcommands would require the api client to talk
-// to a configurable base URL. As-is, the client base URL is derived from the
-// fixed env.Current(). Refactoring that is out of scope here, so we limit
-// ourselves to verifying the --help wiring of these subcommands.
+// End-to-end coverage of the batch subcommands against a stub server lives in
+// batch_e2e_test.go (the API client base URL is env-routed by the harness in
+// testutil_test.go). These tests stay focused on the --help wiring.
 func TestBatchGet_Help(t *testing.T) {
 	root := newRootCmd("dev")
 	var buf bytes.Buffer
