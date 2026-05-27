@@ -107,7 +107,7 @@ func (m selectModel) View() string {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
-	b.WriteString(selectHintStyle.Render("↑/↓ or j/k to move · enter to select · esc or q to cancel"))
+	b.WriteString(selectHintStyle.Render("↑/↓ to move · enter to select · esc to cancel"))
 	return b.String()
 }
 
