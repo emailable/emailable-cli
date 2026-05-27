@@ -246,30 +246,42 @@ func newRootCmd(v string) *cobra.Command {
 func Execute() {
 	root := newRootCmd(version)
 
+	// Skip the network call entirely for opt-outs knowable before flags parse.
+	// Uses IsTerminal, not IsTTY, so NO_COLOR (a styling pref) still gets checks.
+	// JSONMode/Quiet are flag-derived and gate only the notice, below.
+	preSkip := updater.ShouldSkip(updater.Conditions{
+		CurrentVersion: version,
+		StderrTTY:      ui.IsTerminal(root.ErrOrStderr()),
+		OptOut:         env.UpdateNotifierOptOut(),
+	})
+
 	// Kick off the update check in parallel with command execution; resultCh
 	// carries the outcome. The post-command grace block tolerates a hung check.
 	updCtx, updCancel := context.WithCancel(context.Background())
 	defer updCancel()
 	resultCh := make(chan updater.Result, 1)
-	go func() {
-		// Conservatively run the network call even when we might end up
-		// skipping the *notice* (e.g. JSON mode), so the cache refresh
-		// still happens. The notice gate below makes the final call.
-		resultCh <- updater.Check(updCtx, version, updater.CacheDir())
-	}()
+	if preSkip == updater.SkipNone {
+		// Run even when we may end up skipping the notice (e.g. JSON mode) so
+		// the cache still refreshes; the gate below decides on printing.
+		go func() {
+			resultCh <- updater.Check(updCtx, version, updater.CacheDir())
+		}()
+	}
 
 	runErr := root.Execute()
 
-	// Decide whether the *notice* should be considered for printing. This
-	// is the gate the user perceives — silent skips don't even touch the
-	// channel below, so a hung check doesn't delay exit in those cases.
-	skip := updater.ShouldSkip(updater.Conditions{
-		CurrentVersion: version,
-		JSONMode:       jsonOutput,
-		Quiet:          quietMode,
-		StderrTTY:      ui.IsTTY(root.ErrOrStderr()),
-		OptOut:         env.UpdateNotifierOptOut(),
-	})
+	// Re-check with the now-parsed flags to gate the notice. If the pre-flight
+	// already opted out, no goroutine ran, so keep that reason.
+	skip := preSkip
+	if skip == updater.SkipNone {
+		skip = updater.ShouldSkip(updater.Conditions{
+			CurrentVersion: version,
+			JSONMode:       jsonOutput,
+			Quiet:          quietMode,
+			StderrTTY:      ui.IsTerminal(root.ErrOrStderr()),
+			OptOut:         env.UpdateNotifierOptOut(),
+		})
+	}
 
 	if runErr != nil {
 		renderError(root.ErrOrStderr(), runErr, jsonOutput)
