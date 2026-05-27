@@ -22,35 +22,17 @@ import (
 // mid-request; anything looser refreshes too eagerly.
 const refreshSkew = 60 * time.Second
 
-// apiKeyEnv is the environment variable that supplies a non-interactive API
-// key. Honored when --api-key isn't passed; documented in the README.
 const apiKeyEnv = "EMAILABLE_API_KEY"
 
-// debugEnv is the environment variable that enables HTTP debug output, mirroring
-// the --debug flag. Any non-empty value turns it on.
 const debugEnv = "EMAILABLE_DEBUG"
 
 // cmdCtx is the shared bag of state every command needs: active environment,
-// loaded files, persistent flags. Commands grab one via newCmdCtx() in their
-// RunE.
+// credentials (stored via the credentials package), config paths (managed by
+// the config package), and persistent flags.
 //
-// File layout:
-//
-//   - Credentials / CredentialsPath: the global credentials file (env-suffixed
-//     by the resolved env name). Login writes here, logout clears here, OAuth
-//     refresh saves here. Holds api_key and the OAuth token bundle.
-//   - GlobalConfigPath / ProjectConfigPath: the two scopes of the non-secret
-//     config file. URLs only; both are user-managed (the CLI never writes
-//     them). Surfaced for `emailable status` and diagnostics.
-//
-// Per-project API keys are deliberately NOT a file: use EMAILABLE_API_KEY
-// instead.
-//
-// JSONMode and Quiet are populated from the persistent flag state at the
-// time the cmdCtx is built. Commands should prefer reading these fields
-// over the package-level globals so behavior remains consistent even when a
-// command-local helper (e.g. applyStreamImplications) overrides the effective
-// value for its caller.
+// Commands should prefer reading JSONMode/Quiet off the context rather than the
+// package-level globals, so behavior stays consistent when a command-local
+// helper overrides the effective value for its caller.
 type cmdCtx struct {
 	Env             *env.Environment
 	CredentialsPath string
@@ -68,15 +50,10 @@ type cmdCtx struct {
 	refreshNoticeWriter io.Writer
 }
 
-// newCmdCtxFor is the preferred constructor for command RunE bodies: it
-// builds a cmdCtx and pre-wires the refresh-notice writer to the command's
-// stderr. Commands that want the auto-refresh notice should use this rather
-// than newCmdCtx.
-//
-// jsonMode is taken as a parameter (rather than read off the package-level
-// jsonOutput global) so callers that compute an effective JSON value — e.g.
-// applyStreamImplications — can pass the post-implication value without
-// mutating the global.
+// newCmdCtxFor builds a cmdCtx and pre-wires the refresh-notice writer to the
+// command's stderr. jsonMode is a parameter (rather than read off the global)
+// so callers that compute an effective JSON value can pass it without mutating
+// the global.
 func newCmdCtxFor(cmd *cobra.Command, jsonMode bool) (*cmdCtx, error) {
 	c, err := newCmdCtx(jsonMode)
 	if err != nil {
@@ -85,15 +62,9 @@ func newCmdCtxFor(cmd *cobra.Command, jsonMode bool) (*cmdCtx, error) {
 	return c.withRefreshNotice(cmd.ErrOrStderr()), nil
 }
 
-// newCmdCtx resolves the active environment, locates the credentials and
-// config files, and loads the credentials (config files are inspected by
-// env.Current and don't need to be retained on the context). Does not
-// enforce that the user is logged in — that's the per-command's job via
-// requireAuth.
-//
-// Quiet is read off the package-level flag global at call time (cobra has
-// already populated it by the time any RunE fires) so callers only need to
-// thread the JSON value through.
+// newCmdCtx resolves the active environment, locates the credentials and config
+// paths, and loads the credentials. It does not enforce that the user is logged
+// in — that's requireAuth's job.
 func newCmdCtx(jsonMode bool) (*cmdCtx, error) {
 	e, err := env.Current()
 	if err != nil {
@@ -120,13 +91,10 @@ func newCmdCtx(jsonMode bool) (*cmdCtx, error) {
 	}, nil
 }
 
-// apiKeySource is a label describing where the API key came from. Used by
-// the status command (and surfaced as auth_source in JSON output).
-//
-// There's no flag-source variant on purpose: --api-key only exists on the
-// `login` subcommand, where it triggers a save rather than a per-call
-// override. By the time any other command runs, the key has either been
-// promoted to the stored credentials or it isn't going to be used.
+// apiKeySource labels where the API key came from. There's no flag-source
+// variant on purpose: --api-key only exists on `login`, where it triggers a
+// save rather than a per-call override, so by the time any other command runs
+// the key is either stored or unused.
 type apiKeySource string
 
 const (
@@ -137,10 +105,8 @@ const (
 	apiKeySourceMissing apiKeySource = "none"
 )
 
-// effectiveAPIKey returns the API key the CLI will use for the next
-// request, along with a label describing its source. Resolution order:
-// EMAILABLE_API_KEY env, then the stored Credentials.APIKey. Empty key +
-// apiKeySourceNone when no key is configured.
+// effectiveAPIKey returns the API key the CLI will use next and a label for its
+// source. Resolution order: EMAILABLE_API_KEY env, then the stored API key.
 func (c *cmdCtx) effectiveAPIKey() (string, apiKeySource) {
 	if v := os.Getenv(apiKeyEnv); v != "" {
 		return v, apiKeySourceEnv
@@ -151,9 +117,8 @@ func (c *cmdCtx) effectiveAPIKey() (string, apiKeySource) {
 	return "", apiKeySourceNone
 }
 
-// debugEnabled reports whether HTTP debug logging is on for this invocation.
-// True when --debug was passed or EMAILABLE_DEBUG is set to any non-empty
-// value.
+// debugEnabled reports whether HTTP debug logging is on: --debug or a non-empty
+// EMAILABLE_DEBUG.
 func debugEnabled() bool {
 	return debugMode || os.Getenv(debugEnv) != ""
 }
@@ -196,8 +161,7 @@ func (c *cmdCtx) requireAuth() (*api.Client, error) {
 	return api.NewWithOptions(c.Env.APIBaseURL, c.Credentials.AccessToken, c.clientOptions()), nil
 }
 
-// clientOptions returns the api.Options used by requireAuth — currently
-// just toggles debug logging when --debug or EMAILABLE_DEBUG is on.
+// clientOptions returns the api.Options used to build clients.
 func (c *cmdCtx) clientOptions() api.Options {
 	return api.Options{Debug: debugEnabled()}
 }

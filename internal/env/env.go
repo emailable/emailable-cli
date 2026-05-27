@@ -11,13 +11,8 @@
 //   - Global file at $XDG_CONFIG_HOME/emailable/config.json.
 //
 // All three use the same config.Config schema. Within a single source the
-// API/OAuth URLs must be set together. Per-field, higher-precedence
-// sources override lower-precedence ones.
-//
-// The update-notifier opt-out (EMAILABLE_NO_UPDATE_NOTIFIER) is deliberately
-// not part of config.Config and not merged here — it's read straight from the
-// environment by UpdateNotifierOptOut so a malformed config file can't
-// override the user's explicit opt-out.
+// API/OAuth URLs must be set together. Per-field, higher-precedence sources
+// override lower-precedence ones.
 package env
 
 import (
@@ -62,7 +57,6 @@ type Environment struct {
 func MergedConfig() (*config.Config, error) {
 	merged := &config.Config{}
 
-	// Global file (lowest precedence).
 	globalPath, err := config.DefaultPath()
 	if err == nil {
 		g, loadErr := config.Load(globalPath)
@@ -75,7 +69,6 @@ func MergedConfig() (*config.Config, error) {
 		applyOver(merged, g)
 	}
 
-	// Project file overrides global.
 	if path, ok := findProjectConfigFromCWD(); ok {
 		p, err := loadProjectConfig(path)
 		if err != nil {
@@ -84,7 +77,6 @@ func MergedConfig() (*config.Config, error) {
 		applyOver(merged, p)
 	}
 
-	// Env vars override files.
 	envAPI := os.Getenv(envAPIURL)
 	envOAuthV := os.Getenv(envOAuthURL)
 	if envAPI != "" || envOAuthV != "" {
@@ -145,8 +137,6 @@ func UpdateNotifierOptOut() bool {
 }
 
 // isTruthy returns true for "1", "true", "yes", "on" (case-insensitive).
-// Empty / "0" / "false" return false. Matches the convention used by the
-// updater package for opt-out env vars.
 func isTruthy(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "1", "true", "yes", "on":

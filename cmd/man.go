@@ -33,9 +33,7 @@ func newManCmd() *cobra.Command {
 			if err := os.MkdirAll(abs, 0o755); err != nil {
 				return fmt.Errorf("create output dir: %w", err)
 			}
-			// Generate against the root command so every subcommand gets a
-			// page. Walking from cmd.Root() rather than cmd itself ensures
-			// pages exist for siblings (verify, batch, account, ...).
+			// Walk from the root command so every subcommand gets a page.
 			header := &doc.GenManHeader{
 				Title:   "EMAILABLE",
 				Section: "1",

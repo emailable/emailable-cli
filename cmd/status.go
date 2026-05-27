@@ -10,13 +10,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newStatusCmd returns the `emailable status` cobra command — local auth
-// state, no network call. Useful for AI agents and humans diagnosing why a
-// command failed without burning an API request.
-//
-// Companion command: `emailable account status` makes a network call to
-// fetch the owner email + remaining credits. The two share a "status"
-// vocabulary but answer different questions.
+// newStatusCmd returns the `emailable status` command: local auth state, no
+// network call.
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:          "status",
@@ -33,11 +28,8 @@ func newStatusCmd() *cobra.Command {
 }
 
 // runStatusE prints the active environment, file paths, and stored credential
-// state. Never hits the network: an agent or human can quickly answer "what
-// does the CLI think is going on locally?" without waiting on the API.
-//
-// Human mode renders a labeled block; --json emits a flat object suitable
-// for parsing by scripts.
+// state. Never hits the network. Human mode renders a labeled block; --json
+// emits a flat object.
 func runStatusE(cmd *cobra.Command, _ []string) error {
 	cctx, err := newCmdCtx(jsonOutput)
 	if err != nil {
@@ -80,11 +72,9 @@ func runStatusE(cmd *cobra.Command, _ []string) error {
 	return printStatusHuman(cmd, cctx, source, loggedIn, expiresAt, expiresIn)
 }
 
-// authSourceFor returns the credential source the CLI would use for the
-// next request. Distinguishes the API-key locations (env, stored) so a user
-// debugging "why is this key being used?" can see the answer immediately.
-// Returns "oauth" for a stored OAuth token and "none" when no credentials
-// are configured.
+// authSourceFor returns the credential source the CLI would use for the next
+// request, distinguishing the API-key locations (env, stored). Returns "oauth"
+// for a stored OAuth token and "none" when no credentials are configured.
 func authSourceFor(cctx *cmdCtx) (source string, loggedIn bool) {
 	if _, src := cctx.effectiveAPIKey(); src != apiKeySourceNone {
 		return string(src), true
@@ -96,8 +86,6 @@ func authSourceFor(cctx *cmdCtx) (source string, loggedIn bool) {
 }
 
 // printStatusHuman renders the status block for human consumption.
-// Label/value alignment matches PrintAccountView so the two views feel like
-// a set.
 func printStatusHuman(cmd *cobra.Command, cctx *cmdCtx, source string, loggedIn bool, expiresAt string, expiresIn int) error {
 	w := cmd.OutOrStdout()
 	stf := output.StylerFor(w)

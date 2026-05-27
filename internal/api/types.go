@@ -1,8 +1,6 @@
 package api
 
 // VerifyResult is the response from GET /v1/verify.
-// Fields are taken from the Emailable API docs; optional fields use
-// pointers / omitempty so missing values are distinguishable from zero values.
 type VerifyResult struct {
 	Email        string  `json:"email"`
 	State        string  `json:"state"` // deliverable, undeliverable, risky, unknown
@@ -33,10 +31,9 @@ type BatchSubmit struct {
 	Message string `json:"message"`
 }
 
-// BatchTotalCounts is the `total_counts` object the API returns alongside a
-// partial-results payload (GET /v1/batch?partial=true). The same shape is
-// also used by the completed payload for batches that include attribute
-// counters; only Total and Processed are load-bearing for progress display.
+// BatchTotalCounts is the `total_counts` object returned alongside a
+// partial-results payload. Only Total and Processed are load-bearing for
+// progress display.
 type BatchTotalCounts struct {
 	Total     int `json:"total"`
 	Processed int `json:"processed"`
@@ -68,15 +65,9 @@ type BatchStatus struct {
 
 // IsComplete reports whether the batch has finished processing.
 //
-// Completion signals, in order:
-//  1. DownloadFile is set → large completed batch.
-//  2. TotalCounts is set (partial=true response) → done iff
-//     TotalCounts.Processed >= TotalCounts.Total. This is checked before the
-//     top-level counts because a partial-results payload omits them and would
-//     otherwise fall through to the Emails-populated branch and look complete.
-//  3. Top-level counts say done: Total > 0 and Processed >= Total.
-//  4. The top-level counts are absent (Total == 0) but Emails is populated —
-//     the small-batch "completed" payload.
+// TotalCounts is checked before the top-level counts because a partial-results
+// payload omits the latter and would otherwise fall through to the
+// Emails-populated branch and look complete prematurely.
 func (b *BatchStatus) IsComplete() bool {
 	if b.DownloadFile != "" {
 		return true
@@ -95,8 +86,7 @@ func (b *BatchStatus) IsComplete() bool {
 
 // Progress returns (processed, total, ok). ok is false when the payload
 // carries no progress counters (e.g. a completed small-batch payload that
-// dropped them). Callers can use this to render in-progress UI uniformly
-// across the partial=true and partial=false shapes.
+// dropped them).
 func (b *BatchStatus) Progress() (processed, total int, ok bool) {
 	if b.TotalCounts != nil {
 		return b.TotalCounts.Processed, b.TotalCounts.Total, true

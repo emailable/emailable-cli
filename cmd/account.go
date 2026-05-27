@@ -5,9 +5,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newAccountCmd returns the `emailable account ...` group. For now it has a
-// single subcommand, `status`, which prints the owner email and available
-// credits.
+// newAccountCmd returns the `emailable account` command group.
 func newAccountCmd() *cobra.Command {
 	account := &cobra.Command{
 		Use:          "account",

@@ -8,11 +8,9 @@ import (
 	"github.com/emailable/emailable-cli/internal/config"
 )
 
-// Project-local config lives at <dir>/.emailable/config.json. Mirrors the
-// global config layout ($XDG_CONFIG_HOME/emailable/config.json) — both share
-// the same schema (config.Config). The dotfile-prefixed dir keeps it tidy
-// in repo roots (like .github/, .vscode/) and avoids colliding with the many
-// unrelated tools that ship a bare config.json.
+// Project-local config lives at <dir>/.emailable/config.json. The
+// dotfile-prefixed dir keeps it tidy in repo roots and avoids colliding with
+// the many unrelated tools that ship a bare config.json.
 const (
 	projectConfigDir      = ".emailable"
 	projectConfigFilename = "config.json"
@@ -71,19 +69,17 @@ func isDescendantOrEqual(child, parent string) bool {
 	return true
 }
 
-// loadProjectConfig parses a discovered .emailable/config.json file using the
-// shared config.Config schema. Returns the loaded config, or an error if the
-// file is malformed or has only one of the two URLs set (they must be set
-// together within a single file, matching the env-var rule).
+// loadProjectConfig parses a discovered .emailable/config.json file. Returns
+// an error if the file is malformed or has only one of the two URLs set (they
+// must be set together within a single file).
 func loadProjectConfig(path string) (*config.Config, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
 		return nil, err
 	}
 
-	// Half-set URLs within a single file are a user mistake; both must be
-	// set together. env.MergedConfig enforces the same rule on the global
-	// file, so a half-set source can never silently mix with another.
+	// Half-set URLs within a single file are a user mistake; both must be set
+	// together.
 	if (cfg.APIURL == "") != (cfg.OAuthURL == "") {
 		return nil, fmt.Errorf("api_url and oauth_url must both be set")
 	}
@@ -91,9 +87,8 @@ func loadProjectConfig(path string) (*config.Config, error) {
 	return cfg, nil
 }
 
-// ProjectConfigPath finds the project-local .emailable/config.json by
-// walking up from the current working directory. Returns ("", false) when
-// none was found. The returned path is suitable to pass to config.Load.
+// ProjectConfigPath finds the project-local .emailable/config.json by walking
+// up from the current working directory. Returns ("", false) when none found.
 func ProjectConfigPath() (string, bool) {
 	return findProjectConfigFromCWD()
 }

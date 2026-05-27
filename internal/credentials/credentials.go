@@ -2,8 +2,8 @@
 //
 // Credentials are global by design: the CLI's login flow is interactive and
 // machine-scoped. Per-project credentials are intentionally not supported —
-// use the EMAILABLE_API_KEY environment variable (via direnv or your CI's
-// secrets system) for per-project / per-shell API keys.
+// use the EMAILABLE_API_KEY environment variable for per-project / per-shell
+// API keys.
 //
 // The file path is environment-suffixed (credentials.json for the default
 // env, credentials.<name>.json for any other env) so logging in against an

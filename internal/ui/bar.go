@@ -19,13 +19,11 @@ const defaultBarWidth = 50
 // terminals we keep the bar drawable.
 const minBarWidth = 10
 
-// Bar is a two-line progress display in the style of charmbracelet's
-// progress bubble: an animated spinner + status message on the first line,
-// and a solid-fill bar with a "processed/total" counter on the second.
+// Bar is a two-line progress display: an animated spinner + status message on
+// line 1, a solid-fill bar with a "processed/total" counter on line 2.
 //
-// Bar is safe for concurrent calls to Set/SetMessage. Start/Stop should
-// each be called at most once from the owning goroutine, though Stop is
-// idempotent.
+// Set/SetMessage are safe for concurrent use. Start/Stop should each be called
+// at most once from the owning goroutine, though Stop is idempotent.
 type Bar struct {
 	w io.Writer
 	// width, when > 0, locks the bar to a fixed cell count. When 0
@@ -43,9 +41,8 @@ type Bar struct {
 
 	prog progress.Model
 
-	// Cached lipgloss styles. Lipgloss's default renderer auto-detects the
-	// color profile from stderr; since we explicitly gate on IsTTY before
-	// rendering, the styles only emit ANSI on a real terminal.
+	// Cached lipgloss styles. We gate on IsTTY before rendering, so these
+	// only emit ANSI on a real terminal regardless of lipgloss's own probe.
 	spinnerStyle lipgloss.Style
 	checkStyle   lipgloss.Style
 	counterStyle lipgloss.Style
@@ -65,10 +62,8 @@ func NewBar(w io.Writer, width int) *Bar {
 	if width > 0 && width < 4 {
 		width = 4
 	}
-	// The initial progress.Model width is a placeholder; for dynamic
-	// (width=0) bars it's overwritten on each frame in frame(). We use
-	// defaultBarWidth here so that even before the first measurement we
-	// have a sane fallback.
+	// For dynamic (width=0) bars this is just a fallback before the first
+	// per-frame measurement.
 	initialWidth := width
 	if initialWidth == 0 {
 		initialWidth = defaultBarWidth
@@ -141,12 +136,9 @@ func (b *Bar) Start() {
 	}()
 }
 
-// Stop ends the animation and clears both bar lines, leaving the cursor
-// at the column the bar started in. The caller is responsible for any
-// follow-up output (summary line, etc.) — by erasing itself the bar
-// avoids duplicating the completion message that command callers print
-// next, matching how tools like mise collapse progress UI on completion.
-// Idempotent and safe to call without a prior Start.
+// Stop ends the animation and clears both bar lines, leaving the cursor at the
+// column the bar started in so the caller's follow-up output (summary line,
+// etc.) isn't duplicated. Idempotent and safe to call without a prior Start.
 func (b *Bar) Stop() {
 	b.mu.Lock()
 	started := b.started
@@ -161,13 +153,10 @@ func (b *Bar) Stop() {
 	b.wg.Wait()
 
 	if !rendered {
-		// Never drew a frame (Start → Stop with no ticks) — nothing to
-		// erase.
+		// Never drew a frame — nothing to erase.
 		return
 	}
-	// Cursor sits at the end of line 2 from the last tick. Clear that
-	// line, walk up one row, clear line 1, then carriage-return so the
-	// next write starts at column 0 in the position the bar occupied.
+	// Clear line 2, move up one row, clear line 1, return to column 0.
 	fmt.Fprint(b.w, "\r\x1b[2K\x1b[1F\x1b[2K")
 }
 
@@ -217,14 +206,9 @@ func (b *Bar) frame(processed, total, spinIdx int, msg string, done, rendered bo
 	totalWidth := len(fmt.Sprintf("%d", total))
 	counter := b.counterStyle.Render(fmt.Sprintf("%*d/%d", totalWidth, processed, total))
 
-	// Pick the fill width for this frame:
-	//   - b.width == 0  → fit as wide as the terminal allows (cap is
-	//                     terminal cols minus counter + gutter).
-	//   - b.width  > 0  → use that as the desired width, but still cap
-	//                     at terminal fit so a fixed 40-cell bar in a
-	//                     narrow shell never wraps.
-	// terminalWidth is re-measured each frame so SIGWINCH/resize is
-	// picked up without a signal handler.
+	// Fill width: width==0 fits the terminal; width>0 is the desired width
+	// but still capped at terminal fit so it never wraps. Re-measured each
+	// frame so resizes are picked up without a signal handler.
 	target := b.width
 	if cols := terminalWidth(b.w); cols > 0 {
 		fit := cols - lipgloss.Width(counter) - 2
@@ -247,9 +231,8 @@ func (b *Bar) frame(processed, total, spinIdx int, msg string, done, rendered bo
 		buf.WriteString("\n")
 		buf.WriteString(line2)
 	} else {
-		// \x1b[1F: cursor to start of previous line. After printing two
-		// lines, the cursor sits at the end of line 2; one [1F brings it
-		// to the start of line 1. \x1b[2K clears the entire line.
+		// Move to the start of line 1 (\x1b[1F) and clear each line
+		// (\x1b[2K) before reprinting, so the bar updates in place.
 		buf.WriteString("\x1b[1F\x1b[2K")
 		buf.WriteString(line1)
 		buf.WriteString("\n\x1b[2K")

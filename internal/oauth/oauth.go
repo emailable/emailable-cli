@@ -1,9 +1,9 @@
 // Package oauth implements the OAuth 2.0 device authorization grant
-// (RFC 8628) client used by emailable-cli's login flow. It talks to the
-// /oauth/* endpoints on app.emailable.com.
+// (RFC 8628) client used by emailable-cli's login flow, talking to the
+// /oauth/* endpoints.
 //
-// The package is transport-only. It does not touch the config file or
-// surface UX. The cli/login command composes this with internal/config.
+// The package is transport-only: it does not touch the config file or surface
+// UX.
 package oauth
 
 import (
@@ -25,11 +25,9 @@ const grantTypeDeviceCode = "urn:ietf:params:oauth:grant-type:device_code"
 // §3.2 says clients MUST default to 5 seconds when the server omits interval.
 const minPollInterval = 5 * time.Second
 
-// defaultRequestTimeout caps a single OAuth HTTP call. The PollToken loop
-// runs many requests over the lifetime of an authorization, so the bound
-// is per-request rather than per-loop. 30s is comfortable headroom over
-// any realistic OAuth round-trip while still preventing a stuck socket
-// from wedging the login flow indefinitely.
+// defaultRequestTimeout caps a single OAuth HTTP call. Per-request rather than
+// per-loop, since PollToken runs many requests over an authorization's
+// lifetime, but bounded so a stuck socket can't wedge the login flow.
 const defaultRequestTimeout = 30 * time.Second
 
 // OAuth `error` field values the server may return from /oauth/token.
@@ -41,8 +39,8 @@ const (
 	codeInvalidGrant         = "invalid_grant"
 )
 
-// Exported sentinel errors so callers (e.g. the login command) can detect
-// specific failure modes via errors.Is and print friendly messages.
+// Exported sentinel errors so callers can detect specific failure modes via
+// errors.Is.
 var (
 	ErrAccessDenied = errors.New("oauth: access denied")
 	ErrExpiredToken = errors.New("oauth: device code expired")
@@ -93,8 +91,8 @@ func defaultWait(ctx context.Context, d time.Duration) error {
 }
 
 // oauthError is the parsed `{ "error": ..., "error_description": ... }`
-// body OAuth servers return on 4xx responses. Held as a typed value so
-// callers (and PollToken's own loop) can route on Code via errors.As.
+// body OAuth servers return on 4xx responses. Typed so callers can route on
+// Code via errors.As.
 type oauthError struct {
 	Code        string
 	Description string
@@ -213,6 +211,7 @@ func (c *Client) Refresh(ctx context.Context, refreshToken string) (*Token, erro
 	return tok, nil
 }
 
+// Revoke invalidates accessToken via POST /oauth/revoke.
 func (c *Client) Revoke(ctx context.Context, accessToken string) error {
 	form := url.Values{}
 	form.Set("token", accessToken)
@@ -227,7 +226,7 @@ func (c *Client) Revoke(ctx context.Context, accessToken string) error {
 }
 
 // tokenPost wraps formPost with Token decoding. Server errors arrive as a
-// wrapped *oauthError so callers can route on Code via errors.As.
+// wrapped *oauthError.
 func (c *Client) tokenPost(ctx context.Context, form url.Values) (*Token, error) {
 	resp, err := c.formPost(ctx, "/oauth/token", form, "token")
 	if err != nil {
@@ -279,11 +278,9 @@ func wrapSentinel(sentinel error, description string) error {
 	return fmt.Errorf("%w: %s", sentinel, description)
 }
 
-// parseOAuthError reads an OAuth-style error body from resp and returns it
-// as a typed *oauthError so the server's `error` / `error_description`
-// fields surface verbatim, without the package layering its own prefix on
-// top. Callers can use errors.As to recover the Code field for control-flow
-// decisions (e.g. retry on authorization_pending).
+// parseOAuthError reads an OAuth-style error body from resp and returns it as
+// a typed *oauthError so the server's `error` / `error_description` fields
+// surface verbatim, without layering a package-specific prefix on top.
 func parseOAuthError(resp *http.Response, op string) error {
 	var body struct {
 		Error            string `json:"error"`

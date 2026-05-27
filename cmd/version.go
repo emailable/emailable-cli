@@ -9,10 +9,8 @@ import (
 )
 
 // newVersionCmd returns the `emailable version` subcommand. By default it
-// prints the same multi-line human blurb as `emailable --version` (matches
-// gh's parallel `gh version` / `gh --version`). When the persistent --json
-// flag is set, it emits a machine-readable object instead — useful for AI
-// agents and scripts that want to query the running binary's identity.
+// prints the same multi-line human blurb as `emailable --version`; with --json
+// it emits a machine-readable object instead.
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:          "version",
@@ -51,7 +49,7 @@ func writeVersionJSON(cmd *cobra.Command) error {
 		payload["env"] = e.Name
 	}
 
-	// Route through the shared JSON formatter so colorization, NO_COLOR
-	// gating, and indentation stay consistent with the rest of --json.
+	// Route through the shared JSON formatter so output stays consistent with
+	// the rest of --json.
 	return (&output.JSON{W: cmd.OutOrStdout()}).Print(payload)
 }

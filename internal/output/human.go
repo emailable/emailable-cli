@@ -11,35 +11,22 @@ import (
 	"github.com/emailable/emailable-cli/internal/ui"
 )
 
-// Human renders for a terminal. It type-switches on the value:
-//   - *api.VerifyResult or api.VerifyResult: labeled key/value block,
-//     state colored (green/red/yellow/gray) when stdout is a TTY.
-//   - *api.BatchSubmit: "Batch submitted: <id>" plus a hint.
-//   - *api.BatchStatus: "card-like" status block with id + counter.
-//   - []api.VerifyResult: compact table with columns EMAIL, STATE, SCORE, REASON.
-//   - *AccountView: three-line summary (owner email, credit balance, API host).
-//   - any other value: JSON fallback via the JSON formatter.
+// Human renders for a terminal, type-switching on the value to produce
+// labeled blocks, status cards, and tables.
 //
-// Colors are emitted only when w refers to a TTY. Detection is best-effort
-// using golang.org/x/term — when in doubt, plain text is printed. We bypass
-// lipgloss's default renderer (which probes stderr/stdout globally) and
-// gate each render on the actual writer we're printing to.
+// Colors are emitted only when w is a TTY. We gate each render on the actual
+// writer rather than trusting lipgloss's default renderer, which probes
+// stderr/stdout globally.
 type Human struct {
 	W io.Writer
-	// Quiet, when true, suppresses Success / Hint / Notice — the "chrome"
-	// methods that print confirmations, follow-up tips, and in-band notices.
-	// Error rendering is unaffected (errors go through a separate code path).
-	// Print and the typed Print* methods are unaffected too: a user asking
-	// for quiet output of a batch table still wants the table.
+	// Quiet, when true, suppresses the "chrome" methods (Success / Hint /
+	// Notice). Error rendering and the typed Print* methods are unaffected —
+	// a quiet batch table still prints the table.
 	Quiet bool
 }
 
-// Success prints a one-line confirmation styled as `✓ <msg>` — green ✓,
-// bold message. Use for "Batch submitted: …", "Logged in", "Saved N
-// results …", and any other terminal success line. Keeps the symbol
-// vocabulary consistent across commands.
-//
-// No-ops (returns nil without writing) when Quiet is true.
+// Success prints a one-line confirmation styled as `✓ <msg>` — green ✓, bold
+// message. No-ops when Quiet is true.
 func (h *Human) Success(msg string) error {
 	if h.Quiet {
 		return nil
@@ -52,11 +39,8 @@ func (h *Human) Success(msg string) error {
 }
 
 // Notice prints a single dimmed informational line — no leading blank, no
-// glyph. Use it for in-band status messages like "Refreshed access token."
-// or the device-flow "First copy your one-time code: …" prompt where a
-// Success/Hint would feel too celebratory or too separated. Backtick
-// segments render a shade lighter so commands/codes stand out, matching
-// the Hint convention.
+// glyph — for in-band status messages. Backtick segments render a shade
+// lighter so commands/codes stand out. No-ops when Quiet is true.
 func (h *Human) Notice(msg string) error {
 	if h.Quiet {
 		return nil
@@ -78,14 +62,9 @@ func (h *Human) Notice(msg string) error {
 }
 
 // Hint prints a dimmed follow-up line preceded by a blank line so it
-// visually separates from the primary success/result output above it.
-// Use for "Run `emailable …` to do X" tips and download-URL pointers.
-//
-// Text wrapped in backticks renders a shade lighter than the surrounding
-// dim text so commands and flags stand out as copyable tokens without
-// jumping fully to the default foreground. The backticks themselves are
-// stripped from the output. On non-TTY writers the styling collapses to
-// plain text with backticks removed.
+// separates from the output above it. Backtick segments render a shade
+// lighter (commands/flags stand out) and the backticks are stripped.
+// No-ops when Quiet is true.
 func (h *Human) Hint(msg string) error {
 	if h.Quiet {
 		return nil
@@ -144,10 +123,8 @@ func (h *Human) Print(v any) error {
 	}
 }
 
-// State palette. Hex values mirror the Emailable dashboard's brand colors:
-// coral-pink red for undeliverable, powder-blue for unknown. Lipgloss
-// auto-degrades to the nearest 256-color value on terminals that don't
-// support truecolor.
+// State palette mirroring the dashboard's brand colors. Lipgloss
+// auto-degrades to the nearest 256-color value where truecolor is unsupported.
 const (
 	colorDeliverable   = lipgloss.Color("42")      // green
 	colorUndeliverable = lipgloss.Color("#EE6F84") // dashboard coral-pink
@@ -155,8 +132,8 @@ const (
 	colorUnknown       = lipgloss.Color("#7EB7DE") // dashboard powder-blue
 )
 
-// stateColor returns a lipgloss color for a verification state value.
-// 0 means "no color".
+// stateColor returns a lipgloss color for a verification state value; the
+// empty color means "no color".
 func stateColor(state string) lipgloss.Color {
 	switch state {
 	case "deliverable":
@@ -172,8 +149,8 @@ func stateColor(state string) lipgloss.Color {
 	}
 }
 
-// stateGlyph returns a small leading glyph that matches the state's
-// semantic: ✓ deliverable, ✗ undeliverable, ! risky, ? unknown.
+// stateGlyph returns a leading glyph for the state: ✓ deliverable,
+// ✗ undeliverable, ! risky, ? unknown.
 func stateGlyph(state string) string {
 	switch state {
 	case "deliverable":
@@ -200,8 +177,8 @@ func hyperlink(url, text string, enabled bool) string {
 	return "\x1b]8;;" + url + "\x1b\\" + text + "\x1b]8;;\x1b\\"
 }
 
-// isTTY reports whether w is a terminal AND ANSI styling is enabled. Delegates
-// to ui.IsTTY so the NO_COLOR env var suppresses styling here too.
+// isTTY reports whether w is a terminal AND ANSI styling is enabled (NO_COLOR
+// suppresses it).
 func isTTY(w io.Writer) bool {
 	return ui.IsTTY(w)
 }
@@ -212,23 +189,20 @@ func styler(w io.Writer) func(lipgloss.Style) lipgloss.Style {
 	tty := isTTY(w)
 	return func(s lipgloss.Style) lipgloss.Style {
 		if !tty {
-			// Strip styling by returning a fresh empty style. Lipgloss
-			// renders an empty Style as the raw input.
+			// Empty style renders as raw input — strips styling.
 			return lipgloss.NewStyle()
 		}
 		return s
 	}
 }
 
-// StylerFor is the exported form of styler so callers outside this
-// package (one-off styled lines in cmd/) can render with the same
-// TTY-gated approach used by the formatters here.
+// StylerFor is the exported form of styler for callers outside this package
+// that need the same TTY-gated rendering.
 func StylerFor(w io.Writer) func(lipgloss.Style) lipgloss.Style {
 	return styler(w)
 }
 
-// yesNo converts a bool to "Yes" or "No" — capitalized to match the
-// dashboard's attribute table styling.
+// yesNo converts a bool to "Yes" or "No".
 func yesNo(b bool) string {
 	if b {
 		return "Yes"
@@ -236,9 +210,8 @@ func yesNo(b bool) string {
 	return "No"
 }
 
-// titleFirst capitalizes the first byte of s. Used for short ASCII tokens
-// returned in lowercase by the API (state, gender). Not Unicode-aware on
-// purpose: these values are ASCII per the API.
+// titleFirst capitalizes the first byte of s. Not Unicode-aware on purpose:
+// inputs are ASCII tokens (state, gender) per the API.
 func titleFirst(s string) string {
 	if s == "" {
 		return ""
@@ -246,15 +219,13 @@ func titleFirst(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// humanizeState capitalizes the first letter of an API state value.
-// API returns lowercase like "deliverable"; humans see "Deliverable".
+// humanizeState capitalizes the first letter of a lowercase API state value.
 func humanizeState(s string) string {
 	return titleFirst(s)
 }
 
-// humanizeReason maps snake_case API reason codes to their canonical
-// Emailable-app display labels (Accepted Email, Low Deliverability, etc).
-// Returns the input unchanged for unknown codes so we don't lose data.
+// humanizeReason maps snake_case API reason codes to display labels.
+// Unknown codes are returned unchanged so data isn't lost.
 func humanizeReason(r string) string {
 	switch r {
 	case "accepted_email":
@@ -284,11 +255,8 @@ func humanizeReason(r string) string {
 	}
 }
 
-// scoreDisplay returns the user-facing score string. For "unknown" state
-// the numeric score isn't meaningful (the API reports 0 alongside the
-// unknown verdict), so we render an em-dash instead. Used everywhere
-// score is shown: single-verify header badge, single-verify Score row,
-// batch table SCORE column.
+// scoreDisplay returns the user-facing score string. The "unknown" state's
+// numeric score isn't meaningful (API reports 0), so it renders an em-dash.
 func scoreDisplay(score int, state string) string {
 	if state == "unknown" {
 		return "—"
@@ -296,12 +264,9 @@ func scoreDisplay(score int, state string) string {
 	return strconv.Itoa(score)
 }
 
-// scoreBadgeBG returns the lipgloss background color for the score "pill"
-// shown next to the email in the verify result header. Bands mirror the
-// dashboard: green for high deliverability, yellow for risky, coral-pink
-// for the known-bad zero score, powder-blue when the state is "unknown".
-// Reuses the same palette constants as stateColor so the badge and the
-// State row read as a set.
+// scoreBadgeBG returns the background color for the score "pill". Bands
+// mirror the dashboard: green high, yellow risky, coral-pink zero, powder-blue
+// unknown. Shares the stateColor palette so badge and State row read as a set.
 func scoreBadgeBG(score int, state string) lipgloss.Color {
 	if state == "unknown" {
 		return colorUnknown
@@ -316,16 +281,10 @@ func scoreBadgeBG(score int, state string) lipgloss.Color {
 	}
 }
 
-// PrintVerifyResult renders a single real-time verify result using the
-// same section structure as the Emailable web dashboard's Email Verifier:
-// a header line with the email + a colored score badge, then "General",
-// "Attributes", and "Mail Server" sections. Section titles are bold;
-// labels are dimmed; State and the score badge carry semantic color.
-//
-// The human view intentionally matches the dashboard — `user` and
-// `duration` are hidden here (they remain in `--json` for scripts).
-// Optional rows are skipped when empty; empty sections are skipped
-// entirely.
+// PrintVerifyResult renders a single verify result as a header line (email +
+// colored score badge) followed by "General", "Attributes", and "Mail Server"
+// sections. Optional rows and empty sections are skipped. The `user` and
+// `duration` fields are intentionally omitted (JSON output retains them).
 func (h *Human) PrintVerifyResult(r *api.VerifyResult) error {
 	stf := styler(h.W)
 	labelStyle := stf(lipgloss.NewStyle().Foreground(lipgloss.Color("241")))
@@ -349,7 +308,6 @@ func (h *Human) PrintVerifyResult(r *api.VerifyResult) error {
 		rows  []row
 	}
 
-	// General — identity + the headline verification verdict.
 	general := section{title: "General"}
 	fullName := r.FullName
 	if fullName == "" {
@@ -362,9 +320,7 @@ func (h *Human) PrintVerifyResult(r *api.VerifyResult) error {
 		general.rows = append(general.rows, row{"Gender", titleFirst(r.Gender)})
 	}
 	if r.State != "" {
-		// State value is rendered as a colored badge containing the state's
-		// icon (✓ / ! / ✗ / ?), followed by the humanized state name in the
-		// same color. Matches the circled-icon style of the dashboard.
+		// Colored icon badge followed by the state name in the same color.
 		stateBadgeStyle := stf(lipgloss.NewStyle().
 			Background(stateColor(r.State)).
 			Foreground(lipgloss.Color("0")).
@@ -380,9 +336,8 @@ func (h *Human) PrintVerifyResult(r *api.VerifyResult) error {
 		general.rows = append(general.rows, row{"Reason", humanizeReason(r.Reason)})
 	}
 	if r.Domain != "" {
-		// Domain renders as an OSC 8 hyperlink to https://<domain> when stdout
-		// is a TTY, with cyan + underline styling so it looks like a link in
-		// terminals that don't honor OSC 8.
+		// OSC 8 hyperlink on a TTY, with cyan+underline styling as a fallback
+		// for terminals that don't honor OSC 8.
 		linkStyle := stf(lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Underline(true))
 		domainText := linkStyle.Render(r.Domain)
 		general.rows = append(general.rows, row{
@@ -394,7 +349,6 @@ func (h *Human) PrintVerifyResult(r *api.VerifyResult) error {
 		general.rows = append(general.rows, row{"Did you mean", r.DidYouMean})
 	}
 
-	// Attributes — boolean denotations + tag.
 	attrs := section{title: "Attributes", rows: []row{
 		{"Free", yesNo(r.Free)},
 		{"Role", yesNo(r.Role)},
@@ -409,7 +363,6 @@ func (h *Human) PrintVerifyResult(r *api.VerifyResult) error {
 		row{"No Reply", yesNo(r.NoReply)},
 	)
 
-	// Mail Server — DNS / SMTP-side facts.
 	mail := section{title: "Mail Server"}
 	if r.SMTPProvider != "" {
 		mail.rows = append(mail.rows, row{"SMTP Provider", r.SMTPProvider})
@@ -467,11 +420,10 @@ func (h *Human) PrintVerifyResult(r *api.VerifyResult) error {
 	return nil
 }
 
-// PrintBatchStatus renders the in-progress batch status as a compact
-// "status card": a spinner-like glyph + bold ID on line 1, then a dimmed
-// "processed/total (pct%)" counter indented on line 2. When the payload
-// carries no progress counters (queued batch or partial=true response
-// without TotalCounts) the counter is replaced with "(starting...)".
+// PrintBatchStatus renders the batch status as a compact "status card": a
+// glyph + bold ID on line 1, a dimmed "processed/total (pct%)" counter on
+// line 2. When no progress counters are present the counter becomes
+// "(starting...)".
 func (h *Human) PrintBatchStatus(s *api.BatchStatus) error {
 	stf := styler(h.W)
 	idStyle := stf(lipgloss.NewStyle().Bold(true))
@@ -501,17 +453,9 @@ func (h *Human) PrintBatchStatus(s *api.BatchStatus) error {
 	return err
 }
 
-// PrintBatchSummary renders a one-line outcome summary headed by per-state
-// counts (deliverable / undeliverable / risky / unknown) joined with commas.
-//
-// The leading glyph and verb reflect whether the batch has finished:
-//   - complete:  "✓ Verified N emails: …"
-//   - in-flight: "⋯ Partial results (M of N processed): …"
-//
-// Partial detection: when the batch is not yet complete (per BatchStatus.
-// IsComplete) we treat the payload as a partial snapshot — this covers the
-// partial=true response shape, which embeds progress in TotalCounts and
-// includes whatever rows are ready so far.
+// PrintBatchSummary renders a one-line outcome summary with per-state counts.
+// The leading glyph and verb reflect completion: "✓ Verified N emails: …" when
+// done, "⋯ Partial results (M of N processed): …" while in-flight.
 func (h *Human) PrintBatchSummary(s *api.BatchStatus) error {
 	stf := styler(h.W)
 
@@ -545,10 +489,8 @@ func (h *Human) PrintBatchSummary(s *api.BatchStatus) error {
 		return err
 	}
 
-	// Partial / in-flight rendering. The blue-ish glyph matches the
-	// PrintBatchStatus card so users see a consistent "still working"
-	// signal across `batch get` (no flag), `batch get --partial`, and the
-	// queued-spinner phase of `--wait`.
+	// Partial / in-flight: a blue-ish glyph matching the status card for a
+	// consistent "still working" signal.
 	glyph := stf(lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Bold(true)).Render("⋯")
 	processed, total, hasProgress := s.Progress()
 	progressNote := ""
@@ -559,14 +501,9 @@ func (h *Human) PrintBatchSummary(s *api.BatchStatus) error {
 	return err
 }
 
-// PrintBatchResults renders the per-email results table. Styling mirrors
-// the single-verify card aesthetic: SCORE is a colored background pill,
-// STATE pairs the state icon pill with the bold colored state name in a
-// single cell (just like the single-verify State row), email is bold,
-// header row is bold cyan, separator is dimmed. Column widths are computed
-// from rendered cells via lipgloss.Width so ANSI codes don't skew alignment.
-//
-// Column order: EMAIL, SCORE, STATE, REASON.
+// PrintBatchResults renders the per-email results table (columns EMAIL, SCORE,
+// STATE, REASON). SCORE and STATE use colored pills like the single-verify
+// card. Column widths use lipgloss.Width so ANSI codes don't skew alignment.
 func (h *Human) PrintBatchResults(results []api.VerifyResult) error {
 	stf := styler(h.W)
 	headStyle := stf(lipgloss.NewStyle().Foreground(lipgloss.Color("241")))
@@ -590,12 +527,9 @@ func (h *Human) PrintBatchResults(results []api.VerifyResult) error {
 			Padding(0, 1)).
 			Render(stateGlyph(r.State))
 
-		// Build a fixed-width pill body so every score renders as the same
-		// 5-column colored box: 1 gutter + 3 right-aligned content cols +
-		// 1 gutter. We bake the gutters into the rendered string (instead
-		// of using lipgloss Padding) so the entire box — including the
-		// leading whitespace inside the content area — is wrapped in one
-		// styled span and the background extends across the full width.
+		// Fixed-width 5-column pill (1 gutter + 3 right-aligned content + 1
+		// gutter). Gutters are baked into the rendered string rather than
+		// using lipgloss Padding so the background spans the full width.
 		scoreText := scoreDisplay(r.Score, r.State)
 		if pad := 3 - lipgloss.Width(scoreText); pad > 0 {
 			scoreText = strings.Repeat(" ", pad) + scoreText
@@ -614,9 +548,8 @@ func (h *Human) PrintBatchResults(results []api.VerifyResult) error {
 		})
 	}
 
-	// Compute column widths from rendered cells (lipgloss.Width strips ANSI
-	// and counts visual columns, so the pill backgrounds widen the glyph and
-	// score columns correctly).
+	// Column widths from rendered cells (lipgloss.Width strips ANSI and counts
+	// visual columns).
 	widths := make([]int, len(headers))
 	for i, hd := range headerCells {
 		widths[i] = lipgloss.Width(hd)
@@ -709,10 +642,8 @@ func formatThousands(n int) string {
 	return out
 }
 
-// PrintAccountView renders the three-line account summary. Labels are dimmed;
-// the email and credits are bold so the eye lands on the data first. The host
-// line is dimmed since it's metadata used for confirming which backend the
-// CLI is talking to rather than primary information.
+// PrintAccountView renders the account summary: dimmed labels with bold email
+// and credit values.
 func (h *Human) PrintAccountView(v *AccountView) error {
 	stf := styler(h.W)
 	label := stf(lipgloss.NewStyle().Foreground(lipgloss.Color("241")))
