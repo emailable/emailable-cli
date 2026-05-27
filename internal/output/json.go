@@ -8,6 +8,40 @@ import (
 	"github.com/emailable/emailable-cli/internal/ui"
 )
 
+// RawJSONProvider is implemented by API response types that retain the server
+// response. When a value carries raw bytes, machine output is built from those
+// instead of re-encoding the typed struct, so nullable fields and any field the
+// struct doesn't model are preserved — the contract the README advertises.
+//
+// This is a structural passthrough, not byte-for-byte: every key, value, null,
+// and field order is preserved, but insignificant whitespace is normalized to
+// the CLI's two-space indentation (see rawIndented) so output stays consistent
+// and colorizable regardless of how the API formatted the body.
+type RawJSONProvider interface {
+	RawJSON() []byte
+}
+
+// rawIndented returns v's captured response body re-indented to the formatter's
+// two-space style, and true when v carries usable raw bytes. Re-indenting (not
+// emitting the bytes as-is) keeps output uniform whether the API sent compact
+// or pretty JSON. Malformed raw (shouldn't happen for a decoded API body) falls
+// back to typed encoding by returning ok=false.
+func rawIndented(v any) ([]byte, bool) {
+	p, ok := v.(RawJSONProvider)
+	if !ok {
+		return nil, false
+	}
+	raw := p.RawJSON()
+	if len(raw) == 0 {
+		return nil, false
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, raw, "", "  "); err != nil {
+		return nil, false
+	}
+	return buf.Bytes(), true
+}
+
 // JSON pretty-prints any value as two-space-indented JSON with a trailing
 // newline. On a TTY (and NO_COLOR unset) output is colorized jq-style;
 // piped/redirected/NO_COLOR output stays plain.
@@ -15,19 +49,27 @@ type JSON struct {
 	W io.Writer
 }
 
-// Print encodes v to JSON and writes it.
+// Print writes v as JSON. Values carrying a raw response body are emitted from
+// those bytes (re-indented to the CLI's style); everything else is encoded from
+// the typed value.
 func (j *JSON) Print(v any) error {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
-		return err
+	out, ok := rawIndented(v)
+	if ok {
+		out = append(out, '\n')
+	} else {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(v); err != nil {
+			return err
+		}
+		out = buf.Bytes()
 	}
 	if !ui.IsTTY(j.W) {
-		_, err := j.W.Write(buf.Bytes())
+		_, err := j.W.Write(out)
 		return err
 	}
-	_, err := j.W.Write(colorizeJSON(buf.Bytes()))
+	_, err := j.W.Write(colorizeJSON(out))
 	return err
 }
 

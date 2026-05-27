@@ -1,7 +1,33 @@
 package api
 
+// rawReceiver is implemented by response types that retain the verbatim JSON
+// body the server returned. Client.do calls setRaw after a successful decode so
+// machine output can pass the original bytes through unchanged.
+type rawReceiver interface {
+	setRaw([]byte)
+}
+
+// rawJSON holds a captured response body. Embedding it gives a type the raw
+// passthrough plumbing for free. The field is unexported so encoding/json
+// never round-trips it back into output.
+type rawJSON struct {
+	raw []byte
+}
+
+func (r *rawJSON) setRaw(b []byte) { r.raw = b }
+
+// RawJSON returns the verbatim response body the server sent, or nil if the
+// value wasn't produced by an API call (e.g. constructed in a test). Callers
+// emitting machine output should prefer these bytes over re-encoding.
+func (r *rawJSON) RawJSON() []byte { return r.raw }
+
 // VerifyResult is the response from GET /v1/verify.
+//
+// The typed fields below drive human/CSV rendering. JSON output is served from
+// the captured raw body (see rawJSON), so nullable fields and any field this
+// struct doesn't model still pass through unchanged.
 type VerifyResult struct {
+	rawJSON
 	Email        string  `json:"email"`
 	State        string  `json:"state"` // deliverable, undeliverable, risky, unknown
 	Reason       string  `json:"reason"`
@@ -27,6 +53,7 @@ type VerifyResult struct {
 
 // BatchSubmit is the response from POST /v1/batch.
 type BatchSubmit struct {
+	rawJSON
 	ID      string `json:"id"`
 	Message string `json:"message"`
 }
@@ -52,6 +79,7 @@ type BatchTotalCounts struct {
 //     a top-level Message describes the partial state, and progress lives
 //     under TotalCounts (the top-level Total/Processed are NOT used).
 type BatchStatus struct {
+	rawJSON
 	ID           string            `json:"id,omitempty"`
 	Total        int               `json:"total"`
 	Processed    int               `json:"processed"`
@@ -99,6 +127,7 @@ func (b *BatchStatus) Progress() (processed, total int, ok bool) {
 
 // Account is the response from GET /v1/account.
 type Account struct {
+	rawJSON
 	OwnerEmail       string `json:"owner_email"`
 	AvailableCredits int    `json:"available_credits"`
 }
