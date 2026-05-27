@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/emailable/emailable-cli/internal/api"
 	"github.com/emailable/emailable-cli/internal/output"
 	"github.com/emailable/emailable-cli/internal/ui"
 	"github.com/spf13/cobra"
@@ -76,11 +78,133 @@ func runGettingStarted(cmd *cobra.Command) error {
 	fmt.Fprintln(out, body.Render("Let's get you logged in — this only takes a moment."))
 	fmt.Fprintln(out)
 
-	if err := runLoginE(cmd, nil); err != nil {
+	loggedIn, err := runOnboardingLogin(cmd, out)
+	if err != nil {
 		return err
+	}
+	// Don't dangle NEXT STEPS in front of someone who bailed out (esc) without
+	// logging in — they have no credentials to run those commands with.
+	if !loggedIn {
+		return nil
 	}
 
 	return printNextSteps(out)
+}
+
+// loginMethod is the user's choice on the getting-started auth menu.
+type loginMethod int
+
+const (
+	loginMethodOAuth loginMethod = iota
+	loginMethodAPIKey
+	loginMethodCanceled
+)
+
+// runOnboardingLogin presents the two ways to authenticate — browser sign-in or
+// an API key — as an arrow-key menu, then runs the chosen flow. It reports
+// whether the user actually logged in, so the caller can skip the post-login
+// NEXT STEPS when they canceled out (esc). Without an interactive terminal there
+// are no keystrokes to read, so it skips the menu and falls back to the OAuth
+// device flow. The gate is terminal-ness, not ui.IsTTY — a NO_COLOR user on a
+// real terminal still gets the menu (rendered uncolored), like the rest of
+// onboarding.
+func runOnboardingLogin(cmd *cobra.Command, out io.Writer) (loggedIn bool, err error) {
+	if !terminalsInteractive(cmd) {
+		return true, runLoginE(cmd, nil)
+	}
+
+	method, err := chooseLoginMethod(out)
+	if err != nil {
+		return false, err
+	}
+	switch method {
+	case loginMethodOAuth:
+		return true, runLoginE(cmd, nil)
+	case loginMethodAPIKey:
+		return loginWithPromptedAPIKey(cmd, out)
+	default: // loginMethodCanceled
+		return false, nil
+	}
+}
+
+// chooseLoginMethod renders the sign-in/API-key menu and maps the selection to
+// a loginMethod.
+func chooseLoginMethod(out io.Writer) (loginMethod, error) {
+	choices := []ui.Choice{
+		{Label: "Sign in to your account", Hint: "Opens your browser to authorize"},
+		{Label: "Enter an API key", Hint: "Paste a key from your dashboard"},
+	}
+	idx, ok, err := ui.Select(os.Stdin, out, "How would you like to log in?", choices)
+	if err != nil {
+		return loginMethodCanceled, err
+	}
+	if !ok {
+		return loginMethodCanceled, nil
+	}
+	if idx == 1 {
+		return loginMethodAPIKey, nil
+	}
+	return loginMethodOAuth, nil
+}
+
+// loginWithPromptedAPIKey reads an API key from the terminal — masked as
+// bullets so a paste still shows visible feedback — then validates and persists
+// it via the shared login path. A rejected or empty key re-prompts in place
+// rather than dropping the user back to the shell, so a fat-fingered paste is
+// recoverable. A canceled prompt (esc / ctrl-c) aborts onboarding quietly.
+// Failures that aren't about the key itself (network, server errors) propagate
+// so the user isn't trapped looping on an outage.
+func loginWithPromptedAPIKey(cmd *cobra.Command, out io.Writer) (loggedIn bool, err error) {
+	ctx, err := newCmdCtx(jsonOutput)
+	if err != nil {
+		return false, err
+	}
+	notice := &output.Human{W: cmd.ErrOrStderr()}
+
+	for {
+		key, ok, err := ui.Prompt(os.Stdin, out, "Paste your API key:", true)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil // canceled
+		}
+		if key == "" {
+			_ = notice.Notice("Enter your API key, or press esc to cancel.")
+			continue
+		}
+
+		err = loginWithAPIKey(cmd, ctx, key)
+		if err == nil {
+			return true, nil
+		}
+		// An auth-rejection status means the key was refused — recoverable, so
+		// re-prompt. Everything else propagates: notably 402 (out of credits)
+		// means the key is valid, and re-typing it would just loop.
+		var apiErr *api.Error
+		if errors.As(err, &apiErr) && keyRejected(apiErr.StatusCode) {
+			msg := "That API key wasn't accepted."
+			if apiErr.Message != "" {
+				msg = fmt.Sprintf("That API key wasn't accepted: %s", apiErr.Message)
+			}
+			_ = notice.Notice(msg + " Try again, or press esc to cancel.")
+			continue
+		}
+		return false, err
+	}
+}
+
+// keyRejected reports whether an API status means the key itself was refused,
+// so re-prompting for a different key can help. Other statuses — 402
+// out-of-credits, 404, 429, 5xx — aren't fixed by a new key and propagate
+// instead.
+func keyRejected(status int) bool {
+	switch status {
+	case 400, 401, 403:
+		return true
+	default:
+		return false
+	}
 }
 
 // printNextSteps prints a few starter commands to try after onboarding.

@@ -50,6 +50,22 @@ func TestIsFirstRun(t *testing.T) {
 	}
 }
 
+// TestKeyRejected covers which API statuses re-prompt for a new key versus
+// propagate: only the auth-refusal statuses (400/401/403) retry. Notably 402
+// (valid key, out of credits) must propagate so it can't trap the user.
+func TestKeyRejected(t *testing.T) {
+	cases := map[int]bool{
+		400: true, 401: true, 403: true,
+		402: false, 404: false, 408: false, 422: false, 429: false,
+		200: false, 500: false, 503: false,
+	}
+	for status, want := range cases {
+		if got := keyRejected(status); got != want {
+			t.Errorf("keyRejected(%d) = %v, want %v", status, got, want)
+		}
+	}
+}
+
 // TestRootBareShowsHelp asserts that a bare invocation prints help in a
 // non-interactive context (stdout is a buffer, so terminalsInteractive is
 // false) rather than launching onboarding — the guarantee for scripts and CI.
