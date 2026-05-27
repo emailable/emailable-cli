@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -55,8 +54,8 @@ func newLoginCmd() *cobra.Command {
 //     to the credentials file and validated against /v1/account to fetch
 //     the owner email. No OAuth round-trip happens.
 //   - OAuth device flow (interactive): the default — request a device
-//     code, prompt the user to authorize in the browser, poll for the
-//     access_token, persist credentials, fetch the owner email.
+//     code, open the browser to authorize, poll for the access_token,
+//     persist credentials, fetch the owner email.
 //
 // oauth.ErrAccessDenied and oauth.ErrExpiredToken collapse to friendly
 // messages; other errors propagate verbatim so the user sees the cause.
@@ -82,21 +81,23 @@ func runLoginE(cmd *cobra.Command, _ []string) error {
 	}
 
 	hStderr := &output.Human{W: cmd.ErrOrStderr(), Quiet: ctx.Quiet}
-	_ = hStderr.Notice(fmt.Sprintf("First copy your one-time code: %s", dc.UserCode))
-	fmt.Fprintf(cmd.ErrOrStderr(), "Press Enter to open %s in your browser...", dc.VerificationURI)
-
-	reader := bufio.NewReader(os.Stdin)
-	// Read errors are non-fatal; proceed to open the browser regardless.
-	_, _ = reader.ReadString('\n')
-	fmt.Fprintln(cmd.ErrOrStderr())
 
 	openURL := dc.VerificationURIComplete
 	if openURL == "" {
 		openURL = dc.VerificationURI
 	}
+	// verification_uri_complete embeds the code, so we open the browser
+	// straightaway rather than gating on a keypress. We always print the code
+	// and URL too — never just on failure: over SSH or in a container the open
+	// may "succeed" on a browser the user can't see, and the URL is their only
+	// way through. The code lets them confirm the page matches what we sent.
 	if err := openBrowser(openURL); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "(could not open browser; open %s manually)\n", dc.VerificationURI)
+		_ = hStderr.Notice("Couldn't open your browser automatically.")
+	} else {
+		_ = hStderr.Notice("Opening your browser to authorize.")
 	}
+	_ = hStderr.Notice(fmt.Sprintf("Verification code: `%s`", dc.UserCode))
+	_ = hStderr.Notice(fmt.Sprintf("If it doesn't open, visit `%s`", openURL))
 
 	sp := ui.New("Waiting for authorization")
 	sp.Start()
