@@ -7,7 +7,7 @@ import (
 )
 
 // End-to-end coverage of `account status` against a stub server lives in
-// account_e2e_test.go (the api client base URL is env-routed by the harness in
+// account_e2e_test.go (the API client base URL is env-routed by the harness in
 // testutil_test.go). This test stays focused on the --help wiring.
 func TestAccountStatus_Help(t *testing.T) {
 	root := newRootCmd("dev")
