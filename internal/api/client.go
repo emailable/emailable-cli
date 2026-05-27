@@ -139,11 +139,13 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			if err := json.Unmarshal(respBody, out); err != nil {
 				return fmt.Errorf("decode response: %w", err)
 			}
-			// Stash the verbatim response so machine output (--json, saved
-			// .json, stream events) can pass it through unchanged instead of
-			// re-encoding the typed struct and dropping nulls / unknown fields.
+			// Stash the response so machine output (--json, saved .json, stream
+			// events) can pass it through instead of re-encoding the typed
+			// struct and dropping nulls / unknown fields. respBody is a fresh
+			// per-call slice from io.ReadAll that nothing else aliases, so we
+			// hand it over directly rather than copying.
 			if rr, ok := out.(rawReceiver); ok {
-				rr.setRaw(append([]byte(nil), respBody...))
+				rr.setRaw(respBody)
 			}
 			return nil
 		}

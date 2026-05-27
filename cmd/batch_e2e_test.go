@@ -33,8 +33,9 @@ func completedBatchPayload(id string) map[string]any {
 	}
 }
 
-// TestBatchVerify_Submit_HappyPath_JSON covers POST /v1/batch with --json,
-// where we expect just the {"id":...} payload (no polling).
+// TestBatchVerify_Submit_HappyPath_JSON covers POST /v1/batch with --json (no
+// polling): the submit response passes through unchanged, so both id and
+// message reach stdout rather than a reshaped {"id":...}.
 func TestBatchVerify_Submit_HappyPath_JSON(t *testing.T) {
 	var capturedForm string
 	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +60,9 @@ func TestBatchVerify_Submit_HappyPath_JSON(t *testing.T) {
 	payload := decodeJSON(t, res.Stdout.Bytes())
 	if payload["id"] != "bch_abc123" {
 		t.Errorf("expected id in JSON, got %v", payload)
+	}
+	if payload["message"] != "Batch submitted" {
+		t.Errorf("expected submit message to pass through, got %v", payload["message"])
 	}
 	if !strings.Contains(capturedForm, "emails=a%40x.com%2Cb%40y.com") {
 		t.Errorf("expected comma-joined emails in form body, got %q", capturedForm)
@@ -401,6 +405,44 @@ func TestStream_CompleteEventPassesThroughVerbatim(t *testing.T) {
 	row := emails[0].(map[string]any)
 	if v, present := row["accept_all"]; !present || v != nil {
 		t.Errorf("expected per-row accept_all to stay null, got present=%v value=%v", present, v)
+	}
+}
+
+// TestStream_CompleteEventStaysSingleLine guards the NDJSON "one object per
+// line" contract when the API returns a pretty-printed body. Raw fields are
+// embedded as json.RawMessage, but json.Marshal compacts marshaler output, so
+// the emitted complete event must contain no embedded newlines regardless of
+// how the server formatted its JSON.
+func TestStream_CompleteEventStaysSingleLine(t *testing.T) {
+	if testing.Short() {
+		t.Skip("polls, slow")
+	}
+	// Deliberately indented body with real newlines inside the objects.
+	prettyBody := "{\n  \"id\": \"bch_pretty\",\n  \"emails\": [\n    {\n      \"email\": \"a@b.com\",\n      \"state\": \"deliverable\"\n    }\n  ],\n  \"total_counts\": {\n    \"deliverable\": 1,\n    \"processed\": 1,\n    \"total\": 1\n  }\n}"
+	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"id":"bch_pretty"}`))
+			return
+		}
+		_, _ = w.Write([]byte(prettyBody))
+	}))
+	env.seedAPIKey(t, "sk_test_xxx")
+
+	res := runRoot(t, "batch", "verify", "a@b.com", "--stream")
+	if res.Err != nil {
+		t.Fatalf("execute: %v\nstderr: %s", res.Err, res.Stderr.String())
+	}
+	// Every non-empty stdout line must be independently parseable JSON; a
+	// leaked embedded newline would split one event across lines and fail here.
+	for _, line := range strings.Split(strings.TrimSpace(res.Stdout.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			t.Fatalf("NDJSON line is not a single valid JSON object: %v\nline: %q", err, line)
+		}
 	}
 }
 

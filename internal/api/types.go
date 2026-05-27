@@ -53,6 +53,7 @@ type VerifyResult struct {
 
 // BatchSubmit is the response from POST /v1/batch.
 type BatchSubmit struct {
+	rawJSON
 	ID      string `json:"id"`
 	Message string `json:"message"`
 }

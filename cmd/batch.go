@@ -166,9 +166,9 @@ func newBatchCmd() *cobra.Command {
 				return renderBatchOutcome(cmd, cctx, final, submit.ID, outPath, showAll)
 			}
 
-			if jsonEff {
-				return f.Print(map[string]string{"id": submit.ID})
-			}
+			// In JSON mode, pass the submit response (id + message, plus any
+			// future fields) through unchanged rather than reshaping it to a
+			// bare {"id":...}; f.Print emits the captured raw body.
 			return f.Print(submit)
 		},
 	}

@@ -8,19 +8,24 @@ import (
 	"github.com/emailable/emailable-cli/internal/ui"
 )
 
-// RawJSONProvider is implemented by API response types that retain the
-// verbatim server response. When a value carries raw bytes, machine output
-// emits those (re-indented) instead of re-encoding the typed struct, so
-// nullable fields and any field the struct doesn't model pass through
-// unchanged — the contract the README advertises.
+// RawJSONProvider is implemented by API response types that retain the server
+// response. When a value carries raw bytes, machine output is built from those
+// instead of re-encoding the typed struct, so nullable fields and any field the
+// struct doesn't model are preserved — the contract the README advertises.
+//
+// This is a structural passthrough, not byte-for-byte: every key, value, null,
+// and field order is preserved, but insignificant whitespace is normalized to
+// the CLI's two-space indentation (see rawIndented) so output stays consistent
+// and colorizable regardless of how the API formatted the body.
 type RawJSONProvider interface {
 	RawJSON() []byte
 }
 
-// rawIndented returns v's captured response body re-indented to match the
-// formatter's two-space style, and true when v carries usable raw bytes.
-// Malformed raw (shouldn't happen for a decoded API body) falls back to typed
-// encoding by returning ok=false.
+// rawIndented returns v's captured response body re-indented to the formatter's
+// two-space style, and true when v carries usable raw bytes. Re-indenting (not
+// emitting the bytes as-is) keeps output uniform whether the API sent compact
+// or pretty JSON. Malformed raw (shouldn't happen for a decoded API body) falls
+// back to typed encoding by returning ok=false.
 func rawIndented(v any) ([]byte, bool) {
 	p, ok := v.(RawJSONProvider)
 	if !ok {
@@ -44,8 +49,9 @@ type JSON struct {
 	W io.Writer
 }
 
-// Print writes v as JSON. Values carrying a raw response body are emitted
-// verbatim (re-indented); everything else is encoded from the typed value.
+// Print writes v as JSON. Values carrying a raw response body are emitted from
+// those bytes (re-indented to the CLI's style); everything else is encoded from
+// the typed value.
 func (j *JSON) Print(v any) error {
 	out, ok := rawIndented(v)
 	if ok {
