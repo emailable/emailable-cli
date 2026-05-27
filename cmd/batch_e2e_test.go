@@ -140,6 +140,27 @@ func TestBatchVerify_FlagsForwarded(t *testing.T) {
 	}
 }
 
+// TestBatchVerify_SimulateForwarded checks --simulate is threaded into the
+// submit form body.
+func TestBatchVerify_SimulateForwarded(t *testing.T) {
+	var capturedForm string
+	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var buf bytes.Buffer
+		_, _ = buf.ReadFrom(r.Body)
+		capturedForm = buf.String()
+		writeJSON(w, map[string]any{"id": "bch_sim"})
+	}))
+	env.seedAPIKey(t, "sk_test_xxx")
+
+	res := runRoot(t, "batch", "verify", "a@x.com", "--simulate", "card_error", "--json")
+	if res.Err != nil {
+		t.Fatalf("execute: %v", res.Err)
+	}
+	if !strings.Contains(capturedForm, "simulate=card_error") {
+		t.Errorf("expected simulate=card_error in form body, got %q", capturedForm)
+	}
+}
+
 // TestBatchGet_Complete validates the happy-path GET /v1/batch flow rendering
 // per-email summary output.
 func TestBatchGet_Complete(t *testing.T) {

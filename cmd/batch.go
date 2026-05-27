@@ -181,6 +181,9 @@ func newBatchCmd() *cobra.Command {
 	verify.Flags().String("url", "", "URL that will receive the batch results via HTTP POST")
 	verify.Flags().Bool("retries", true, "Retry verifications when mail servers return certain responses, increasing accuracy")
 	verify.Flags().StringSlice("response-fields", nil, "Fields to include in the response (default: all)")
+	// Test-key-only: forces the API to return a simulated error so error
+	// handling can be exercised without real verifications.
+	verify.Flags().String("simulate", "", "Simulate an API error response (test key only): generic_error, insufficient_credits_error, payment_error, card_error")
 
 	batch.AddCommand(get, verify)
 	return batch
@@ -213,6 +216,14 @@ func submitBatchOptionsFromFlags(cmd *cobra.Command) (*api.SubmitBatchOptions, e
 			return nil, err
 		}
 		opts.ResponseFields = v
+		any = true
+	}
+	if cmd.Flags().Changed("simulate") {
+		v, err := cmd.Flags().GetString("simulate")
+		if err != nil {
+			return nil, err
+		}
+		opts.Simulate = v
 		any = true
 	}
 	if !any {

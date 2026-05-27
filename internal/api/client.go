@@ -319,6 +319,7 @@ type SubmitBatchOptions struct {
 	URL            string   // optional webhook URL the server POSTs to on completion
 	Retries        *bool    // nil => server default (true)
 	ResponseFields []string // optional subset of result fields to return; nil => all
+	Simulate       string   // test-key-only: simulate an API error response; "" => off
 }
 
 // SubmitBatch submits emails for batch verification via POST /batch and
@@ -335,6 +336,9 @@ func (c *Client) SubmitBatch(ctx context.Context, emails []string, opts *SubmitB
 		}
 		if len(opts.ResponseFields) > 0 {
 			form.Set("response_fields", strings.Join(opts.ResponseFields, ","))
+		}
+		if opts.Simulate != "" {
+			form.Set("simulate", opts.Simulate)
 		}
 	}
 	var out BatchSubmit

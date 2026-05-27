@@ -78,6 +78,10 @@ func newVerifyCmd() *cobra.Command {
 	cmd.Flags().Bool("smtp", true, "Perform the SMTP step (disabling speeds responses but reduces accuracy)")
 	cmd.Flags().Bool("accept-all", false, "Perform an Accept-All check (heavily impacts response time)")
 	cmd.Flags().Int("timeout", 0, "Timeout to wait for response, in seconds (2–10)")
+	// The documented `captcha_response` parameter is intentionally not exposed:
+	// it only applies to public API keys behind a CAPTCHA challenge in
+	// client-side (browser/mobile) flows. The CLI authenticates with a secret
+	// key, where CAPTCHA never applies, so a flag for it would be dead weight.
 	return cmd
 }
 
