@@ -171,6 +171,9 @@ func newRootCmd(v string) *cobra.Command {
 		Version:       versionDisplay(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// A bare `emailable` either onboards a logged-out user on a TTY or
+		// prints help; see runRootDefault.
+		RunE: runRootDefault,
 		// Resolve the default output format before any RunE runs. Precedence:
 		// --json flag > EMAILABLE_OUTPUT > config `output` > "human".
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
