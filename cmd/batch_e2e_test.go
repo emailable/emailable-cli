@@ -161,6 +161,26 @@ func TestBatchVerify_SimulateForwarded(t *testing.T) {
 	}
 }
 
+// TestBatchVerify_SimulateInvalid rejects an unknown --simulate value locally
+// with a clear message, without contacting the server.
+func TestBatchVerify_SimulateInvalid(t *testing.T) {
+	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("server should not be hit for an invalid --simulate value")
+	}))
+	env.seedAPIKey(t, "sk_test_xxx")
+
+	res := runRoot(t, "batch", "verify", "a@x.com", "--simulate", "card_eror")
+	if res.Err == nil {
+		t.Fatal("expected error for invalid --simulate value")
+	}
+	if got := errorCode(res.Err); got != codeInvalidInput {
+		t.Errorf("errorCode: got %q, want %q", got, codeInvalidInput)
+	}
+	if !strings.Contains(res.Err.Error(), "card_error") {
+		t.Errorf("expected error to list valid values, got %v", res.Err)
+	}
+}
+
 // TestBatchGet_Complete validates the happy-path GET /v1/batch flow rendering
 // per-email summary output.
 func TestBatchGet_Complete(t *testing.T) {

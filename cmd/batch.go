@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -183,10 +184,29 @@ func newBatchCmd() *cobra.Command {
 	verify.Flags().StringSlice("response-fields", nil, "Fields to include in the response (default: all)")
 	// Test-key-only: forces the API to return a simulated error so error
 	// handling can be exercised without real verifications.
-	verify.Flags().String("simulate", "", "Simulate an API error response (test key only): generic_error, insufficient_credits_error, payment_error, card_error")
+	verify.Flags().String("simulate", "", "Simulate an API error response (test key only): "+strings.Join(simulateValues, ", "))
 
 	batch.AddCommand(get, verify)
 	return batch
+}
+
+// simulateValues are the documented test-key-only error scenarios accepted by
+// the batch `simulate` parameter. Kept in sync with the --simulate flag help.
+var simulateValues = []string{
+	"generic_error",
+	"insufficient_credits_error",
+	"payment_error",
+	"card_error",
+}
+
+// isValidSimulate reports whether v is one of the documented simulate values.
+func isValidSimulate(v string) bool {
+	for _, s := range simulateValues {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // submitBatchOptionsFromFlags builds SubmitBatchOptions, leaving fields unset
@@ -222,6 +242,9 @@ func submitBatchOptionsFromFlags(cmd *cobra.Command) (*api.SubmitBatchOptions, e
 		v, err := cmd.Flags().GetString("simulate")
 		if err != nil {
 			return nil, err
+		}
+		if !isValidSimulate(v) {
+			return nil, NewInvalidInputf("--simulate must be one of %s (got %q)", strings.Join(simulateValues, ", "), v)
 		}
 		opts.Simulate = v
 		any = true

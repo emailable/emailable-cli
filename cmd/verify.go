@@ -15,7 +15,9 @@ import (
 // each could have a focused flag surface and clearer help text.
 //
 // Flags map 1:1 to the GET /v1/verify query parameters documented at
-// https://emailable.com/docs/api/emails/. Each is only forwarded when the
+// https://emailable.com/docs/api/emails/, with one deliberate exception:
+// captcha_response is not exposed (it only applies to public API keys in
+// client-side CAPTCHA flows — see below). Each flag is only forwarded when the
 // user explicitly set it (cobra's pflag.Changed), so omitted flags fall
 // through to whatever server-side default is current.
 func newVerifyCmd() *cobra.Command {
