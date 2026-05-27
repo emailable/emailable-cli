@@ -186,6 +186,63 @@ func TestBatchGet_JSON(t *testing.T) {
 	}
 }
 
+// rawBatchPayload is a completed batch whose body carries the full
+// total_counts state breakdown, per-row null fields, and a field the typed
+// struct doesn't model — the cases a struct round-trip would lose.
+const rawBatchPayload = `{"id":"bch_raw","emails":[{"email":"a@b.com","state":"risky","accept_all":null,"tag":null}],"reason_counts":{"accepted_email":1},"total_counts":{"deliverable":1,"undeliverable":2,"risky":3,"unknown":4,"duplicate":5,"processed":15,"total":15},"future_field":"keep-me"}`
+
+// TestBatchGet_JSON_PassesThroughVerbatim pins passthrough for `batch get
+// --json`: the full total_counts breakdown (the typed struct keeps only
+// total/processed), per-row nulls, and unmodeled fields must all survive.
+func TestBatchGet_JSON_PassesThroughVerbatim(t *testing.T) {
+	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(rawBatchPayload))
+	}))
+	env.seedAPIKey(t, "sk_test_xxx")
+
+	res := runRoot(t, "batch", "get", "bch_raw", "--json")
+	if res.Err != nil {
+		t.Fatalf("execute: %v", res.Err)
+	}
+	out := res.Stdout.String()
+	for _, want := range []string{
+		`"deliverable": 1`, `"undeliverable": 2`, `"risky": 3`,
+		`"unknown": 4`, `"duplicate": 5`,
+		`"accept_all": null`, `"tag": null`,
+		`"future_field": "keep-me"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q to pass through unchanged, got:\n%s", want, out)
+		}
+	}
+}
+
+// TestBatchGet_SaveJSON_PassesThroughVerbatim confirms the same fidelity for a
+// saved .json file (the -o path).
+func TestBatchGet_SaveJSON_PassesThroughVerbatim(t *testing.T) {
+	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(rawBatchPayload))
+	}))
+	env.seedAPIKey(t, "sk_test_xxx")
+
+	out := filepath.Join(t.TempDir(), "results.json")
+	res := runRoot(t, "batch", "get", "bch_raw", "-o", out)
+	if res.Err != nil {
+		t.Fatalf("execute: %v\nstderr: %s", res.Err, res.Stderr.String())
+	}
+	data, err := readFile(out)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	for _, want := range []string{`"duplicate": 5`, `"accept_all": null`, `"future_field": "keep-me"`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("expected %q in saved file, got:\n%s", want, data)
+		}
+	}
+}
+
 // TestBatchGet_Partial: --partial passes partial=true on the query.
 func TestBatchGet_Partial(t *testing.T) {
 	var sawPartial bool
@@ -301,6 +358,49 @@ func TestBatchVerify_StreamMode(t *testing.T) {
 	last := decodeJSON(t, []byte(lines[len(lines)-1]))
 	if last["event"] != "complete" {
 		t.Errorf("expected complete event last, got %v", last)
+	}
+}
+
+// TestStream_CompleteEventPassesThroughVerbatim confirms the NDJSON `complete`
+// event merges the raw batch body through unchanged: per-row nulls and the
+// full total_counts survive, rather than being reconstructed from typed fields.
+func TestStream_CompleteEventPassesThroughVerbatim(t *testing.T) {
+	if testing.Short() {
+		t.Skip("polls, slow")
+	}
+	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"id":"bch_raw"}`))
+			return
+		}
+		_, _ = w.Write([]byte(rawBatchPayload))
+	}))
+	env.seedAPIKey(t, "sk_test_xxx")
+
+	res := runRoot(t, "batch", "verify", "a@b.com", "--stream")
+	if res.Err != nil {
+		t.Fatalf("execute: %v\nstderr: %s", res.Err, res.Stderr.String())
+	}
+	lines := strings.Split(strings.TrimSpace(res.Stdout.String()), "\n")
+	last := decodeJSON(t, []byte(lines[len(lines)-1]))
+	if last["event"] != "complete" {
+		t.Fatalf("expected complete event last, got %v", last)
+	}
+	tc, ok := last["total_counts"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected total_counts object in complete event, got %v", last["total_counts"])
+	}
+	if tc["duplicate"] != float64(5) {
+		t.Errorf("expected total_counts.duplicate=5 to pass through, got %v", tc["duplicate"])
+	}
+	emails, ok := last["emails"].([]any)
+	if !ok || len(emails) != 1 {
+		t.Fatalf("expected 1 email in complete event, got %v", last["emails"])
+	}
+	row := emails[0].(map[string]any)
+	if v, present := row["accept_all"]; !present || v != nil {
+		t.Errorf("expected per-row accept_all to stay null, got present=%v value=%v", present, v)
 	}
 }
 

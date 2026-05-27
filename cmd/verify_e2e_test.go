@@ -67,6 +67,37 @@ func TestVerify_HappyPath_JSON(t *testing.T) {
 	}
 }
 
+// TestVerify_JSON_PassesThroughVerbatim pins the README's "unchanged"
+// guarantee: nullable fields the server sends as null must stay null (not
+// collapse to false/""/dropped via the typed struct), and fields the struct
+// doesn't model must survive. A struct round-trip would fail every assertion
+// here.
+func TestVerify_JSON_PassesThroughVerbatim(t *testing.T) {
+	const body = `{"email":"x@y.com","state":"risky","accept_all":null,"tag":null,"smtp_provider":null,"first_name":null,"future_field":"keep-me"}`
+	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	env.seedAPIKey(t, "sk_test_xxx")
+
+	res := runRoot(t, "verify", "x@y.com", "--json")
+	if res.Err != nil {
+		t.Fatalf("execute: %v", res.Err)
+	}
+	out := res.Stdout.String()
+	for _, want := range []string{
+		`"accept_all": null`,
+		`"tag": null`,
+		`"smtp_provider": null`,
+		`"first_name": null`,
+		`"future_field": "keep-me"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q to pass through unchanged, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestVerify_FlagsAreForwarded verifies --smtp, --accept-all, --timeout are
 // threaded through to the request query.
 func TestVerify_FlagsAreForwarded(t *testing.T) {

@@ -275,11 +275,34 @@ func (s *batchStreamer) emitProgress(id string, processed, total int) error {
 }
 
 // emitComplete emits the terminal `complete` event carrying the final status.
+//
+// When the status carries the verbatim API body, its fields (emails,
+// total_counts, reason_counts, …) are merged through unchanged so per-row
+// nulls and unmodeled fields survive — matching the passthrough guarantee of
+// the non-streaming --json output. `event` and `id` are stamped on top. When
+// no raw body is present (e.g. a hand-built status in a test), it falls back to
+// reconstructing the event from the typed fields.
 func (s *batchStreamer) emitComplete(id string, status *api.BatchStatus) error {
 	payload := map[string]any{
 		"event": "complete",
 		"id":    id,
 	}
+
+	if raw := status.RawJSON(); len(raw) > 0 {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err == nil {
+			for k, v := range fields {
+				// event/id are CLI-owned envelope keys; never let the API
+				// body shadow them.
+				if k == "event" || k == "id" {
+					continue
+				}
+				payload[k] = v
+			}
+			return s.emit(payload)
+		}
+	}
+
 	if status.Status != "" {
 		payload["status"] = status.Status
 	}

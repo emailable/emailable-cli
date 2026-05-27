@@ -139,6 +139,12 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			if err := json.Unmarshal(respBody, out); err != nil {
 				return fmt.Errorf("decode response: %w", err)
 			}
+			// Stash the verbatim response so machine output (--json, saved
+			// .json, stream events) can pass it through unchanged instead of
+			// re-encoding the typed struct and dropping nulls / unknown fields.
+			if rr, ok := out.(rawReceiver); ok {
+				rr.setRaw(append([]byte(nil), respBody...))
+			}
 			return nil
 		}
 

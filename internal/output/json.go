@@ -8,6 +8,35 @@ import (
 	"github.com/emailable/emailable-cli/internal/ui"
 )
 
+// RawJSONProvider is implemented by API response types that retain the
+// verbatim server response. When a value carries raw bytes, machine output
+// emits those (re-indented) instead of re-encoding the typed struct, so
+// nullable fields and any field the struct doesn't model pass through
+// unchanged — the contract the README advertises.
+type RawJSONProvider interface {
+	RawJSON() []byte
+}
+
+// rawIndented returns v's captured response body re-indented to match the
+// formatter's two-space style, and true when v carries usable raw bytes.
+// Malformed raw (shouldn't happen for a decoded API body) falls back to typed
+// encoding by returning ok=false.
+func rawIndented(v any) ([]byte, bool) {
+	p, ok := v.(RawJSONProvider)
+	if !ok {
+		return nil, false
+	}
+	raw := p.RawJSON()
+	if len(raw) == 0 {
+		return nil, false
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, raw, "", "  "); err != nil {
+		return nil, false
+	}
+	return buf.Bytes(), true
+}
+
 // JSON pretty-prints any value as two-space-indented JSON with a trailing
 // newline. On a TTY (and NO_COLOR unset) output is colorized jq-style;
 // piped/redirected/NO_COLOR output stays plain.
@@ -15,19 +44,26 @@ type JSON struct {
 	W io.Writer
 }
 
-// Print encodes v to JSON and writes it.
+// Print writes v as JSON. Values carrying a raw response body are emitted
+// verbatim (re-indented); everything else is encoded from the typed value.
 func (j *JSON) Print(v any) error {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
-		return err
+	out, ok := rawIndented(v)
+	if ok {
+		out = append(out, '\n')
+	} else {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(v); err != nil {
+			return err
+		}
+		out = buf.Bytes()
 	}
 	if !ui.IsTTY(j.W) {
-		_, err := j.W.Write(buf.Bytes())
+		_, err := j.W.Write(out)
 		return err
 	}
-	_, err := j.W.Write(colorizeJSON(buf.Bytes()))
+	_, err := j.W.Write(colorizeJSON(out))
 	return err
 }
 
