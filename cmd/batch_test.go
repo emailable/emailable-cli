@@ -9,7 +9,7 @@ import (
 )
 
 // End-to-end coverage of the batch subcommands against a stub server lives in
-// batch_e2e_test.go (the api client base URL is env-routed by the harness in
+// batch_e2e_test.go (the API client base URL is env-routed by the harness in
 // testutil_test.go). These tests stay focused on the --help wiring.
 func TestBatchGet_Help(t *testing.T) {
 	root := newRootCmd("dev")
