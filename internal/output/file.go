@@ -126,9 +126,13 @@ func resultCount(v any) int {
 }
 
 func writeJSON(v any, path string) (int, error) {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return 0, fmt.Errorf("marshal json: %w", err)
+	data, ok := rawIndented(v)
+	if !ok {
+		var err error
+		data, err = json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			return 0, fmt.Errorf("marshal json: %w", err)
+		}
 	}
 	// Trailing newline for POSIX friendliness.
 	data = append(data, '\n')

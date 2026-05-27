@@ -6,10 +6,9 @@ import (
 	"testing"
 )
 
-// End-to-end testing of `account status` would require the api client to talk
-// to a configurable base URL. As-is, the client base URL is derived from the
-// fixed env.Current(). Refactoring that is out of scope here, so we limit
-// ourselves to verifying the --help wiring of the subcommand.
+// End-to-end coverage of `account status` against a stub server lives in
+// account_e2e_test.go (the api client base URL is env-routed by the harness in
+// testutil_test.go). This test stays focused on the --help wiring.
 func TestAccountStatus_Help(t *testing.T) {
 	root := newRootCmd("dev")
 	var buf bytes.Buffer

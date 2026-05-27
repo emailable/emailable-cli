@@ -181,6 +181,9 @@ func newBatchCmd() *cobra.Command {
 	verify.Flags().String("url", "", "URL that will receive the batch results via HTTP POST")
 	verify.Flags().Bool("retries", true, "Retry verifications when mail servers return certain responses, increasing accuracy")
 	verify.Flags().StringSlice("response-fields", nil, "Fields to include in the response (default: all)")
+	// Test-key-only: forces the API to return a simulated error so error
+	// handling can be exercised without real verifications.
+	verify.Flags().String("simulate", "", "Simulate an API error response (test key only): generic_error, insufficient_credits_error, payment_error, card_error")
 
 	batch.AddCommand(get, verify)
 	return batch
@@ -213,6 +216,14 @@ func submitBatchOptionsFromFlags(cmd *cobra.Command) (*api.SubmitBatchOptions, e
 			return nil, err
 		}
 		opts.ResponseFields = v
+		any = true
+	}
+	if cmd.Flags().Changed("simulate") {
+		v, err := cmd.Flags().GetString("simulate")
+		if err != nil {
+			return nil, err
+		}
+		opts.Simulate = v
 		any = true
 	}
 	if !any {
@@ -275,11 +286,34 @@ func (s *batchStreamer) emitProgress(id string, processed, total int) error {
 }
 
 // emitComplete emits the terminal `complete` event carrying the final status.
+//
+// When the status carries the verbatim API body, its fields (emails,
+// total_counts, reason_counts, …) are merged through unchanged so per-row
+// nulls and unmodeled fields survive — matching the passthrough guarantee of
+// the non-streaming --json output. `event` and `id` are stamped on top. When
+// no raw body is present (e.g. a hand-built status in a test), it falls back to
+// reconstructing the event from the typed fields.
 func (s *batchStreamer) emitComplete(id string, status *api.BatchStatus) error {
 	payload := map[string]any{
 		"event": "complete",
 		"id":    id,
 	}
+
+	if raw := status.RawJSON(); len(raw) > 0 {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err == nil {
+			for k, v := range fields {
+				// event/id are CLI-owned envelope keys; never let the API
+				// body shadow them.
+				if k == "event" || k == "id" {
+					continue
+				}
+				payload[k] = v
+			}
+			return s.emit(payload)
+		}
+	}
+
 	if status.Status != "" {
 		payload["status"] = status.Status
 	}

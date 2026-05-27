@@ -246,30 +246,49 @@ func newRootCmd(v string) *cobra.Command {
 func Execute() {
 	root := newRootCmd(version)
 
+	// Pre-flight skip: the opt-out env var, CI, stderr TTY-ness, and the build
+	// version are all known before the command parses its flags, so when any
+	// of them opts out we never launch the network call at all. (JSONMode and
+	// Quiet come from flags parsed during Execute, so they can't be evaluated
+	// here — they're handled by the post-command notice gate below, which may
+	// still suppress a notice whose cache refresh we deliberately allowed.)
+	preSkip := updater.ShouldSkip(updater.Conditions{
+		CurrentVersion: version,
+		StderrTTY:      ui.IsTTY(root.ErrOrStderr()),
+		OptOut:         env.UpdateNotifierOptOut(),
+	})
+
 	// Kick off the update check in parallel with command execution; resultCh
 	// carries the outcome. The post-command grace block tolerates a hung check.
 	updCtx, updCancel := context.WithCancel(context.Background())
 	defer updCancel()
 	resultCh := make(chan updater.Result, 1)
-	go func() {
-		// Conservatively run the network call even when we might end up
-		// skipping the *notice* (e.g. JSON mode), so the cache refresh
-		// still happens. The notice gate below makes the final call.
-		resultCh <- updater.Check(updCtx, version, updater.CacheDir())
-	}()
+	if preSkip == updater.SkipNone {
+		go func() {
+			// Conservatively run the network call even when we might end up
+			// skipping the *notice* (e.g. JSON mode), so the cache refresh
+			// still happens. The notice gate below makes the final call.
+			resultCh <- updater.Check(updCtx, version, updater.CacheDir())
+		}()
+	}
 
 	runErr := root.Execute()
 
 	// Decide whether the *notice* should be considered for printing. This
 	// is the gate the user perceives — silent skips don't even touch the
-	// channel below, so a hung check doesn't delay exit in those cases.
-	skip := updater.ShouldSkip(updater.Conditions{
-		CurrentVersion: version,
-		JSONMode:       jsonOutput,
-		Quiet:          quietMode,
-		StderrTTY:      ui.IsTTY(root.ErrOrStderr()),
-		OptOut:         env.UpdateNotifierOptOut(),
-	})
+	// channel below, so a hung check doesn't delay exit in those cases. When
+	// the pre-flight already opted out, no goroutine is running, so we keep
+	// that reason and never wait on the channel.
+	skip := preSkip
+	if skip == updater.SkipNone {
+		skip = updater.ShouldSkip(updater.Conditions{
+			CurrentVersion: version,
+			JSONMode:       jsonOutput,
+			Quiet:          quietMode,
+			StderrTTY:      ui.IsTTY(root.ErrOrStderr()),
+			OptOut:         env.UpdateNotifierOptOut(),
+		})
+	}
 
 	if runErr != nil {
 		renderError(root.ErrOrStderr(), runErr, jsonOutput)
