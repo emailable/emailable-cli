@@ -49,6 +49,12 @@ var isTerminal = func(w io.Writer) bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
+// IsTerminal reports whether w is a terminal, ignoring NO_COLOR. Use it for
+// interactivity decisions; IsTTY (which honors NO_COLOR) is for styling.
+func IsTerminal(w io.Writer) bool {
+	return isTerminal(w)
+}
+
 // terminalWidth returns the column count of the terminal w is writing to,
 // or 0 if w isn't a TTY or the size can't be determined. Re-measured on
 // every frame so the progress bar tracks terminal resizes.

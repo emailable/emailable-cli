@@ -59,6 +59,11 @@ func TestIsTTY_NoColor(t *testing.T) {
 		t.Errorf("NO_COLOR=yes: IsTTY should be false, got true")
 	}
 
+	// IsTerminal ignores NO_COLOR, so it stays true here.
+	if !IsTerminal(&buf) {
+		t.Errorf("NO_COLOR set: IsTerminal should stay true")
+	}
+
 	// Sanity-check style helpers respect the propagated decision.
 	if got := Cyan("x", IsTTY(&buf)); got != "x" {
 		t.Errorf("Cyan with NO_COLOR set should return %q, got %q", "x", got)
