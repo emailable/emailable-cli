@@ -65,6 +65,9 @@ const blankBraille = '⠀'
 // BrandPurple is Emailable's primary brand purple, used for the wordmark text.
 var BrandPurple = lipgloss.Color("#7e61ff")
 
+// BrandPurpleSoft is a lighter tint for supporting chrome (form gutters).
+var BrandPurpleSoft = lipgloss.Color("#c7c2ff")
+
 // brandPalette maps the color letters in brandColors to their brand hex.
 // '.' has no entry — it's never looked up because blank cells aren't styled.
 var brandPalette = map[byte]lipgloss.Color{
