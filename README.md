@@ -467,13 +467,15 @@ Common targets:
 - `make test` — run tests with race detector and coverage
 - `make fmt` — format with `gofmt`
 - `make lint` — run `golangci-lint`
+- `make release VERSION=x.y.z` — bump `plugin.json`, commit, and tag `vx.y.z`
 - `make release-snapshot` — build a local snapshot release via `goreleaser`
+
+## Cutting a Release
+
+Run `make release VERSION=x.y.z` on a clean tree, then `git push --follow-tags`.
+Pushing the tag triggers the release workflow.
 
 ## Contributing
 
 Bug reports and pull requests are welcome on GitHub at
 https://github.com/emailable/emailable-cli.
-
-## License
-
-[MIT](LICENSE)
