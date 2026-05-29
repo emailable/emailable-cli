@@ -90,6 +90,10 @@ homebrew_casks:
       - man/emailable-batch-verify.1
       - man/emailable-login.1
       - man/emailable-logout.1
+      - man/emailable-skill.1
+      - man/emailable-skill-install.1
+      - man/emailable-skill-print.1
+      - man/emailable-skill-targets.1
       - man/emailable-status.1
       - man/emailable-verify.1
       - man/emailable-version.1

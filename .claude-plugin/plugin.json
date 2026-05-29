@@ -1,0 +1,12 @@
+{
+  "name": "emailable",
+  "version": "0.1.0",
+  "description": "Emailable integration for Claude Code. Verify single addresses, run batch verification jobs, and check account credits via the Emailable CLI.",
+  "author": {
+    "name": "Emailable",
+    "email": "support@emailable.com"
+  },
+  "homepage": "https://github.com/emailable/emailable-cli",
+  "repository": "https://github.com/emailable/emailable-cli",
+  "license": "MIT"
+}

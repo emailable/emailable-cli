@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/emailable/emailable-cli/internal/api"
 	"github.com/emailable/emailable-cli/internal/output"
+	"github.com/emailable/emailable-cli/internal/skill"
 	"github.com/emailable/emailable-cli/internal/ui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -86,6 +87,10 @@ func runGettingStarted(cmd *cobra.Command) error {
 	// logging in — they have no credentials to run those commands with.
 	if !loggedIn {
 		return nil
+	}
+
+	if err := maybeOfferSkillInstall(cmd, out); err != nil {
+		return err
 	}
 
 	return printNextSteps(out)
@@ -205,6 +210,46 @@ func keyRejected(status int) bool {
 	default:
 		return false
 	}
+}
+
+// maybeOfferSkillInstall is the post-login Yes/No prompt. No-op off TTY.
+func maybeOfferSkillInstall(cmd *cobra.Command, out io.Writer) error {
+	if !terminalsInteractive(cmd) {
+		return nil
+	}
+
+	stf := output.StylerFor(out)
+	body := stf(lipgloss.NewStyle())
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, body.Render("Using an AI coding agent? We can install a skill so it knows"))
+	fmt.Fprintln(out, body.Render("how to verify emails with this CLI."))
+	fmt.Fprintln(out)
+
+	choices := []ui.Choice{
+		{Label: "Yes", Hint: "Installs for Claude Code, Codex, and OpenCode"},
+		{Label: "No", Hint: "Skip — run `emailable skill install` later"},
+	}
+	idx, ok, err := ui.Select(os.Stdin, out, "Install the Emailable agent skill?", choices)
+	if err != nil {
+		return err
+	}
+	if !ok || idx != 0 {
+		return nil
+	}
+
+	res, err := skill.InstallAll()
+	if err != nil {
+		_ = (&output.Human{W: cmd.ErrOrStderr()}).Notice(fmt.Sprintf("Couldn't install skill: %v", err))
+		return nil
+	}
+	h := &output.Human{W: out}
+	if err := h.Success(fmt.Sprintf("Skill installed to %s", res.SkillPath)); err != nil {
+		return err
+	}
+	if len(res.Links) > 0 {
+		printLinks(out, res.Links)
+	}
+	return nil
 }
 
 // printNextSteps prints a few starter commands to try after onboarding.

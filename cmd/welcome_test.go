@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"bytes"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -78,5 +81,33 @@ func TestRootBareShowsHelp(t *testing.T) {
 	}
 	if out := res.Stdout.String(); !strings.Contains(out, "USAGE") {
 		t.Errorf("expected help output for bare invocation, got:\n%s", out)
+	}
+}
+
+// TestMaybeOfferSkillInstall_SkipsWithoutTTY asserts the prompt is a quiet
+// no-op when there's no interactive terminal — without this gate the
+// bubbletea program would block waiting for keys nobody can press.
+func TestMaybeOfferSkillInstall_SkipsWithoutTTY(t *testing.T) {
+	newTestEnv(t, http.NotFoundHandler())
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+
+	orig := terminalsInteractive
+	terminalsInteractive = func(*cobra.Command) bool { return false }
+	t.Cleanup(func() { terminalsInteractive = orig })
+
+	var out, errBuf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+
+	if err := maybeOfferSkillInstall(cmd, &out); err != nil {
+		t.Fatalf("maybeOfferSkillInstall: %v", err)
+	}
+	if out.Len() != 0 || errBuf.Len() != 0 {
+		t.Errorf("expected silent no-op without TTY, got stdout=%q stderr=%q", out.String(), errBuf.String())
+	}
+	if _, err := os.Stat(filepath.Join(fakeHome, ".agents")); !os.IsNotExist(err) {
+		t.Errorf("expected ~/.agents not to exist after no-TTY skip, got err=%v", err)
 	}
 }
