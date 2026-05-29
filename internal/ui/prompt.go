@@ -5,75 +5,37 @@ import (
 	"io"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 )
 
-// Prompt renders a single-line text input on out, reading keystrokes from in,
-// and returns what the user typed. When mask is true the entry is echoed as
-// bullets rather than shown verbatim — use it for secrets like API keys, where
-// the user still wants visible feedback that their paste landed. ok is false
-// when the user canceled (esc / ctrl-c) without submitting.
-//
-// Like Select, the prompt clears itself on exit so the caller can print its own
-// confirmation, and must only be invoked when stdin and out are both terminals
-// (do not gate on ui.IsTTY, which also reports false under NO_COLOR — a NO_COLOR
-// terminal is still interactive).
+// Prompt returns value, ok, err. ok is false on esc / ctrl-c. mask
+// echoes bullets for secrets.
 func Prompt(in io.Reader, out io.Writer, label string, mask bool) (value string, ok bool, err error) {
-	ti := textinput.New()
-	ti.Focus()
-	ti.Prompt = ""
+	return PromptWithPlaceholder(in, out, label, "", mask)
+}
+
+// PromptWithPlaceholder is Prompt with a placeholder hint.
+func PromptWithPlaceholder(in io.Reader, out io.Writer, label, placeholder string, mask bool) (value string, ok bool, err error) {
+	var v string
+	field := huh.NewInput().
+		Title(label).
+		Placeholder(placeholder).
+		Value(&v)
 	if mask {
-		ti.EchoMode = textinput.EchoPassword
-		ti.EchoCharacter = '•'
+		field = field.EchoMode(huh.EchoModePassword)
 	}
 
-	m := promptModel{label: label, input: ti}
-	p := tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(out))
-	res, err := p.Run()
-	if err != nil {
+	form := huh.NewForm(huh.NewGroup(field)).
+		WithTheme(EmailableTheme()).
+		WithKeyMap(EscKeyMap()).
+		WithInput(in).
+		WithOutput(out)
+
+	if err := form.Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return "", false, nil
+		}
 		return "", false, err
 	}
-	final, ok := res.(promptModel)
-	if !ok {
-		return "", false, errors.New("ui.Prompt: unexpected model type")
-	}
-	if final.canceled {
-		return "", false, nil
-	}
-	return strings.TrimSpace(final.input.Value()), true, nil
-}
-
-// promptModel is the bubbletea model backing Prompt.
-type promptModel struct {
-	label    string
-	input    textinput.Model
-	canceled bool
-	quitting bool
-}
-
-func (m promptModel) Init() tea.Cmd { return textinput.Blink }
-
-func (m promptModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
-		switch key.Type {
-		case tea.KeyEnter:
-			m.quitting = true
-			return m, tea.Quit
-		case tea.KeyCtrlC, tea.KeyEsc:
-			m.canceled = true
-			m.quitting = true
-			return m, tea.Quit
-		}
-	}
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	return m, cmd
-}
-
-func (m promptModel) View() string {
-	if m.quitting {
-		return "" // wipe the prompt region; the caller prints its own confirmation
-	}
-	return selectPromptStyle.Render(m.label) + " " + m.input.View()
+	return strings.TrimSpace(v), true, nil
 }
