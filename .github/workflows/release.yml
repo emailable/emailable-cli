@@ -9,8 +9,26 @@ permissions:
   contents: write
 
 jobs:
+  verify-version:
+    name: Verify plugin.json version
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check tag matches plugin.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          plugin="$(jq -r .version .claude-plugin/plugin.json)"
+          if [ "$tag" != "$plugin" ]; then
+            echo "::error::Tag v$tag does not match .claude-plugin/plugin.json version $plugin. Run 'make release VERSION=$tag'."
+            exit 1
+          fi
+          echo "Tag matches plugin.json version: $plugin"
+
   goreleaser:
     name: GoReleaser
+    needs: verify-version
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
