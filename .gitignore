@@ -1,7 +1,7 @@
 # Binaries
 /bin/
 /dist/
-emailable
+/emailable
 
 # Generated man pages (built at release time by goreleaser)
 /man/

@@ -221,7 +221,10 @@ func newRootCmd(v string) *cobra.Command {
 	versionSub := newVersionCmd()
 	versionSub.GroupID = groupExtras
 
-	root.AddCommand(verify, batch, account, login, logout, status, versionSub, newManCmd())
+	skillSub := newSkillCmd()
+	skillSub.GroupID = groupExtras
+
+	root.AddCommand(verify, batch, account, login, logout, status, versionSub, skillSub, newManCmd())
 
 	// Hide cobra's auto-generated `completion` command from --help. It's
 	// still callable, just doesn't clutter the curated command list.

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "emailable",
+  "description": "Emailable integration for Claude Code — verify email deliverability and manage your Emailable account.",
+  "owner": {
+    "name": "Emailable",
+    "email": "support@emailable.com"
+  },
+  "plugins": [
+    {
+      "name": "emailable",
+      "description": "Emailable integration for Claude Code. Verify single addresses, run batch verification jobs, and check account credits via the Emailable CLI.",
+      "source": "./",
+      "category": "productivity",
+      "homepage": "https://github.com/emailable/emailable-cli"
+    }
+  ]
+}
