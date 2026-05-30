@@ -1,6 +1,6 @@
 {
   "name": "emailable",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Emailable integration for Claude Code. Verify single addresses, run batch verification jobs, and check account credits via the Emailable CLI.",
   "author": {
     "name": "Emailable",
