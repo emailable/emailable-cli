@@ -21,6 +21,8 @@ builds:
     ldflags:
       - -s -w
       - -X github.com/emailable/emailable-cli/cmd.version={{ .Version }}
+      - -X github.com/emailable/emailable-cli/cmd.commit={{ .ShortCommit }}
+      - -X github.com/emailable/emailable-cli/cmd.buildDate={{ time "2006-01-02" }}
     goos:
       - linux
       - darwin

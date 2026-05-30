@@ -15,11 +15,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// version and buildDate are injected at link time via -ldflags -X. version
-// defaults to "dev"; buildDate is empty for local builds and falls back to VCS
-// info via runtime/debug.ReadBuildInfo when present.
+// version, commit, and buildDate are injected via -ldflags -X (GoReleaser sets
+// all three); they fall back to runtime/debug VCS info for local `make build`.
+// An injected commit is trusted clean — GoReleaser's before-hooks dirty the
+// worktree, which would otherwise stamp releases "-dirty".
 var (
 	version   = "dev"
+	commit    = ""
 	buildDate = ""
 )
 
@@ -106,7 +108,7 @@ type versionInfo struct {
 
 // collectVersionInfo gathers version metadata from ldflags and VCS build info.
 func collectVersionInfo() versionInfo {
-	vi := versionInfo{Version: version, BuildDate: buildDate}
+	vi := versionInfo{Version: version, BuildDate: buildDate, Commit: commit}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return vi
@@ -116,10 +118,12 @@ func collectVersionInfo() versionInfo {
 		switch s.Key {
 		case "vcs.revision":
 			fromVCS = true
-			if len(s.Value) > 7 {
-				vi.Commit = s.Value[:7]
-			} else {
-				vi.Commit = s.Value
+			if vi.Commit == "" {
+				if len(s.Value) > 7 {
+					vi.Commit = s.Value[:7]
+				} else {
+					vi.Commit = s.Value
+				}
 			}
 		case "vcs.time":
 			if vi.BuildDate == "" {
@@ -128,7 +132,10 @@ func collectVersionInfo() versionInfo {
 				}
 			}
 		case "vcs.modified":
-			vi.Dirty = s.Value == "true"
+			// Only a VCS-derived commit can be dirty; an injected one is clean.
+			if commit == "" {
+				vi.Dirty = s.Value == "true"
+			}
 		}
 	}
 	// `go install module@vX.Y.Z` injects no ldflags and builds from the module
@@ -144,13 +151,9 @@ func collectVersionInfo() versionInfo {
 }
 
 // versionExtras returns the date / commit info shown in parens after the
-// version number. Prefers a release-time ldflags-injected buildDate; falls
-// back to runtime/debug.ReadBuildInfo VCS data for local checkouts.
+// version number. Prefers ldflags-injected values (GoReleaser); falls back to
+// runtime/debug.ReadBuildInfo VCS data for local checkouts.
 func versionExtras() string {
-	// A release-injected buildDate trumps VCS info (and suppresses the commit prefix).
-	if buildDate != "" {
-		return buildDate
-	}
 	vi := collectVersionInfo()
 	var parts []string
 	if vi.Commit != "" {
