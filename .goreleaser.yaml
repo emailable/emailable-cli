@@ -54,15 +54,10 @@ snapshot:
   version_template: "{{ .Tag }}-next"
 
 changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
+  use: github-native
 
 release:
-  draft: false
+  draft: true
   prerelease: auto
 
 homebrew_casks:
