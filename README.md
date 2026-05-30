@@ -45,6 +45,12 @@ scoop bucket add emailable https://github.com/emailable/scoop-bucket
 scoop install emailable
 ```
 
+**Arch Linux (AUR):**
+
+```bash
+yay -S emailable-bin
+```
+
 In each snippet below, set `ver`/`arch` to the release you want (use
 `arch=arm64` on ARM). The `checksums.txt` step verifies the download before
 installing — these are GitHub-hosted artifacts, not served from a signed repo.

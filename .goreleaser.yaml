@@ -133,3 +133,25 @@ scoops:
     # Skip the upload when the token is missing so `make release-snapshot`
     # and the first release (before the bucket repo exists) keep working.
     skip_upload: '{{ if eq .Env.RELEASE_GITHUB_TOKEN "" }}true{{ else }}auto{{ end }}'
+
+aurs:
+  - name: emailable-bin
+    ids:
+      - emailable
+    # Skipped for snapshots so `make release-snapshot` works without
+    # AUR_KEY; tag builds fail loudly if the secret is missing.
+    disable: '{{ .IsSnapshot }}'
+    homepage: https://emailable.com
+    description: Official command-line interface for the Emailable API.
+    maintainers:
+      - "Emailable <support@emailable.com>"
+    license: MIT
+    private_key: "{{ .Env.AUR_KEY }}"
+    git_url: "ssh://aur@aur.archlinux.org/emailable-bin.git"
+    skip_upload: auto
+    package: |-
+      install -Dm755 "./emailable" "${pkgdir}/usr/bin/emailable"
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+      for page in ./man/*.1; do
+        install -Dm644 "$page" "${pkgdir}/usr/share/man/man1/$(basename "$page")"
+      done
