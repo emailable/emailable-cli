@@ -1,11 +1,15 @@
 version: 2
 
+# Default optional secrets so templates referencing them resolve even when the
+# var is unset (e.g. `make release-snapshot`, where no tap token is exported).
+env:
+  - RELEASE_GITHUB_TOKEN={{ envOrDefault "RELEASE_GITHUB_TOKEN" "" }}
+
 before:
   hooks:
     - go mod tidy
-    # Generate man pages from a fresh local build. Goreleaser runs this once
-    # before any cross-compiled artifacts are produced, so the pages end up
-    # in every archive (see archives.files below) regardless of GOOS.
+    # Built from a local host binary, not a cross-compile — same man pages
+    # end up in every archive regardless of GOOS.
     - sh -c 'go run . man -o ./man'
 
 builds:
@@ -39,13 +43,32 @@ archives:
       - goos: windows
         formats:
           - zip
-    # Bundle the generated man pages alongside the binary in every archive.
-    # The Homebrew cask (below) picks them up automatically; users on
-    # bare-tarball installs can copy `man/*.1` into their MANPATH.
+    # Bare-tarball users can copy man/*.1 onto their MANPATH.
     files:
       - LICENSE
       - README.md
       - man/*.1
+
+nfpms:
+  - id: emailable
+    ids:
+      - emailable
+    package_name: emailable
+    vendor: Emailable
+    homepage: https://emailable.com
+    maintainer: Emailable <support@emailable.com>
+    description: Official command-line interface for the Emailable API.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/bin
+    contents:
+      # nfpm expands globs, so this picks up every generated page without a
+      # per-command list to keep in sync (unlike the Homebrew cask below).
+      - src: ./man/*.1
+        dst: /usr/share/man/man1/
 
 checksum:
   name_template: "checksums.txt"
@@ -69,13 +92,12 @@ homebrew_casks:
     repository:
       owner: emailable
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      token: "{{ .Env.RELEASE_GITHUB_TOKEN }}"
     homepage: "https://emailable.com"
     description: "Official command-line interface for the Emailable API"
     skip_upload: auto
-    # Install the bundled man(1) pages so `man emailable` works out of the
-    # box for cask users. Globs aren't supported — list each page explicitly.
-    # Regenerate this list whenever a top-level command is added or removed.
+    # Globs aren't supported — list each page explicitly. Regenerate this
+    # list when a top-level command is added or removed.
     manpages:
       - man/emailable.1
       - man/emailable-account.1
@@ -92,3 +114,20 @@ homebrew_casks:
       - man/emailable-status.1
       - man/emailable-verify.1
       - man/emailable-version.1
+
+scoops:
+  - name: emailable
+    ids:
+      - emailable
+    repository:
+      owner: emailable
+      name: scoop-bucket
+      # Same PAT as the Homebrew cask above; needs `contents:write` on both
+      # the homebrew-tap and scoop-bucket repos.
+      token: "{{ .Env.RELEASE_GITHUB_TOKEN }}"
+    homepage: https://emailable.com
+    description: Official command-line interface for the Emailable API.
+    license: MIT
+    # Skip the upload when the token is missing so `make release-snapshot`
+    # and the first release (before the bucket repo exists) keep working.
+    skip_upload: '{{ if eq .Env.RELEASE_GITHUB_TOKEN "" }}true{{ else }}auto{{ end }}'
