@@ -2,7 +2,6 @@ package output
 
 import (
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -126,16 +125,10 @@ func resultCount(v any) int {
 }
 
 func writeJSON(v any, path string) (int, error) {
-	data, ok := rawIndented(v)
-	if !ok {
-		var err error
-		data, err = json.MarshalIndent(v, "", "  ")
-		if err != nil {
-			return 0, fmt.Errorf("marshal json: %w", err)
-		}
+	data, err := marshalDocument(v, false)
+	if err != nil {
+		return 0, fmt.Errorf("marshal json: %w", err)
 	}
-	// Trailing newline for POSIX friendliness.
-	data = append(data, '\n')
 	if err := atomicWrite(path, data); err != nil {
 		return 0, err
 	}

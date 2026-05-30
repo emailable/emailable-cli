@@ -8,8 +8,10 @@
 - **Keep the CLI surface 1:1 with the [API
   endpoints](https://emailable.com/docs/api/).** Don't split one endpoint into
   multiple subcommands or merge two into one without a reason.
-- **Comment the "why," not the "what."** A comment should explain a non-obvious
-  trade-off, gotcha, or spec quirk — not restate what the code plainly does or
-  repeat a function signature. Never narrate what another package or command
-  does ("login writes here, logout clears there"); those references silently rot
-  when the other code moves. Keep one concise doc line on exported symbols.
+- **Comments are a last resort — write self-documenting code.** Never leave a
+  comment unless it's absolutely necessary. Name things well and structure code
+  so it explains itself; reach for a comment only when something is genuinely
+  confusing and the code truly can't convey it — a surprising trade-off, gotcha,
+  or spec quirk. Never restate what the code does, repeat a signature, or
+  narrate another package or command ("login writes here, logout clears there");
+  those rot when the other code moves.

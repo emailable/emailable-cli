@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"github.com/emailable/emailable-cli/internal/api"
-	"github.com/emailable/emailable-cli/internal/output"
 	"github.com/emailable/emailable-cli/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -53,7 +52,7 @@ func newVerifyCmd() *cobra.Command {
 				return err
 			}
 
-			f := output.New(cmd.OutOrStdout(), jsonOutput)
+			f := newOutput(cmd.OutOrStdout(), jsonOutput)
 
 			// Real-time verification can take several seconds (SMTP probes,
 			// Accept-All checks). Run a spinner so the user sees motion

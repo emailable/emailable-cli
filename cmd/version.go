@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/emailable/emailable-cli/internal/env"
-	"github.com/emailable/emailable-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -49,7 +48,5 @@ func writeVersionJSON(cmd *cobra.Command) error {
 		payload["env"] = e.Name
 	}
 
-	// Route through the shared JSON formatter so output stays consistent with
-	// the rest of --json.
-	return (&output.JSON{W: cmd.OutOrStdout()}).Print(payload)
+	return newJSON(cmd.OutOrStdout()).Print(payload)
 }

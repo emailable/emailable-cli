@@ -15,18 +15,13 @@ import (
 //
 // This is a structural passthrough, not byte-for-byte: every key, value, null,
 // and field order is preserved, but insignificant whitespace is normalized to
-// the CLI's two-space indentation (see rawIndented) so output stays consistent
-// and colorizable regardless of how the API formatted the body.
+// the formatter's shape (see documentBytes) so output stays consistent and
+// colorizable regardless of how the API formatted the body.
 type RawJSONProvider interface {
 	RawJSON() []byte
 }
 
-// rawIndented returns v's captured response body re-indented to the formatter's
-// two-space style, and true when v carries usable raw bytes. Re-indenting (not
-// emitting the bytes as-is) keeps output uniform whether the API sent compact
-// or pretty JSON. Malformed raw (shouldn't happen for a decoded API body) falls
-// back to typed encoding by returning ok=false.
-func rawIndented(v any) ([]byte, bool) {
+func rawBytes(v any) ([]byte, bool) {
 	p, ok := v.(RawJSONProvider)
 	if !ok {
 		return nil, false
@@ -35,42 +30,122 @@ func rawIndented(v any) ([]byte, bool) {
 	if len(raw) == 0 {
 		return nil, false
 	}
-	var buf bytes.Buffer
-	if err := json.Indent(&buf, raw, "", "  "); err != nil {
-		return nil, false
-	}
-	return buf.Bytes(), true
+	return raw, true
 }
 
-// JSON pretty-prints any value as two-space-indented JSON with a trailing
-// newline. On a TTY (and NO_COLOR unset) output is colorized jq-style;
-// piped/redirected/NO_COLOR output stays plain.
+// JSON renders a value as JSON — pretty by default, one line when Compact,
+// colorized on a TTY. A set Query (--jq) filters the value before printing.
 type JSON struct {
-	W io.Writer
+	W       io.Writer
+	Query   *Query
+	Compact bool
 }
 
-// Print writes v as JSON. Values carrying a raw response body are emitted from
-// those bytes (re-indented to the CLI's style); everything else is encoded from
-// the typed value.
-func (j *JSON) Print(v any) error {
-	out, ok := rawIndented(v)
-	if ok {
-		out = append(out, '\n')
-	} else {
+// FilterError distinguishes a --jq runtime error from an I/O error, so the
+// streaming path can skip an event whose filter errored instead of aborting.
+type FilterError struct{ Err error }
+
+func (e *FilterError) Error() string { return e.Err.Error() }
+func (e *FilterError) Unwrap() error { return e.Err }
+
+// marshalDocument renders v's JSON document — the raw API body when present
+// (only whitespace reshaped, so unmodeled fields and nulls survive), else the
+// typed encoding. Shared by the formatter and file writes so they can't drift.
+func marshalDocument(v any, compact bool) ([]byte, error) {
+	if raw, ok := rawBytes(v); ok {
 		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(v); err != nil {
-			return err
+		var err error
+		if compact {
+			err = json.Compact(&buf, raw)
+		} else {
+			err = json.Indent(&buf, raw, "", "  ")
 		}
-		out = buf.Bytes()
+		if err == nil {
+			buf.WriteByte('\n')
+			return buf.Bytes(), nil
+		}
+		// Malformed raw: fall through to typed encoding below.
 	}
-	if !ui.IsTTY(j.W) {
-		_, err := j.W.Write(out)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	if !compact {
+		enc.SetIndent("", "  ")
+	}
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (j *JSON) documentBytes(v any) ([]byte, error) {
+	return marshalDocument(v, j.Compact)
+}
+
+func (j *JSON) Print(v any) error {
+	if j.Query != nil {
+		return j.printFiltered(v)
+	}
+	out, err := j.documentBytes(v)
+	if err != nil {
 		return err
 	}
-	_, err := j.W.Write(colorizeJSON(out))
+	if ui.IsTTY(j.W) {
+		out = colorizeJSON(out)
+	}
+	_, err = j.W.Write(out)
 	return err
+}
+
+// printFiltered writes each --jq result on its own line. Strings print raw
+// (unquoted, like `jq -r`); everything else as JSON.
+func (j *JSON) printFiltered(v any) error {
+	doc, err := j.documentBytes(v)
+	if err != nil {
+		return err
+	}
+	var input any
+	if err := json.Unmarshal(doc, &input); err != nil {
+		return err
+	}
+	results, err := j.Query.run(input)
+	if err != nil {
+		return &FilterError{Err: err}
+	}
+
+	tty := ui.IsTTY(j.W)
+	var out bytes.Buffer
+	for _, r := range results {
+		if s, ok := r.(string); ok {
+			out.WriteString(s)
+			out.WriteByte('\n')
+			continue
+		}
+		b, err := j.encodeResult(r)
+		if err != nil {
+			return err
+		}
+		if tty {
+			b = colorizeJSON(b)
+		}
+		out.Write(b)
+		out.WriteByte('\n')
+	}
+	_, err = j.W.Write(out.Bytes())
+	return err
+}
+
+func (j *JSON) encodeResult(r any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	// HTML escaping off so URLs and angle brackets survive, the way jq emits them.
+	enc.SetEscapeHTML(false)
+	if !j.Compact {
+		enc.SetIndent("", "  ")
+	}
+	if err := enc.Encode(r); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 // ANSI escape sequences for the JSON palette. Raw codes (not lipgloss): the

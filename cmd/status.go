@@ -66,7 +66,7 @@ func runStatusE(cmd *cobra.Command, _ []string) error {
 			payload["expires_at"] = expiresAt
 			payload["expires_in"] = expiresIn
 		}
-		return (&output.JSON{W: cmd.OutOrStdout()}).Print(payload)
+		return newJSON(cmd.OutOrStdout()).Print(payload)
 	}
 
 	return printStatusHuman(cmd, cctx, source, loggedIn, expiresAt, expiresIn)
