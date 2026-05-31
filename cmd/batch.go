@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -135,7 +136,7 @@ func newBatchCmd() *cobra.Command {
 				return err
 			}
 
-			f := output.New(cmd.OutOrStdout(), jsonEff)
+			f := newOutput(cmd.OutOrStdout(), jsonEff)
 
 			submit, err := client.SubmitBatch(cmd.Context(), emails, submitOpts)
 			if err != nil {
@@ -230,32 +231,24 @@ func printBatchID(w io.Writer, id string) {
 	fmt.Fprintf(w, "%s %s\n", label, id)
 }
 
-// batchStreamer emits NDJSON progress events (one JSON object per line) while
-// a batch is polled, so a consumer sees movement instead of one object at the
-// end. Each event carries an "event" discriminator plus the batch id.
 type batchStreamer struct {
-	w io.Writer
+	f *output.JSON
 }
 
-// newStreamerIfEnabled returns a batchStreamer writing to the command's stdout
-// when stream is true, otherwise nil.
 func newStreamerIfEnabled(cmd *cobra.Command, stream bool) *batchStreamer {
 	if !stream {
 		return nil
 	}
-	return &batchStreamer{w: cmd.OutOrStdout()}
+	return &batchStreamer{f: &output.JSON{W: cmd.OutOrStdout(), Compact: true, Query: jqQuery}}
 }
 
-// emit writes payload as one JSON line followed by a newline.
 func (s *batchStreamer) emit(payload map[string]any) error {
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return err
+	err := s.f.Print(payload)
+	// A --jq filter that errors on an event skips it, never aborting the stream.
+	var fe *output.FilterError
+	if errors.As(err, &fe) {
+		return nil
 	}
-	if _, err := s.w.Write(b); err != nil {
-		return err
-	}
-	_, err = s.w.Write([]byte("\n"))
 	return err
 }
 
@@ -485,12 +478,12 @@ func renderBatchOutcome(cmd *cobra.Command, cctx *cmdCtx, status *api.BatchStatu
 		return saveToFile(cmd, cctx, status, outPath)
 	}
 	if cctx.JSONMode {
-		return output.New(cmd.OutOrStdout(), true).Print(status)
+		return newOutput(cmd.OutOrStdout(), true).Print(status)
 	}
 	if status.DownloadFile != "" || len(status.Emails) == 0 {
 		// >1000-emails download case, or a still-processing batch with no
 		// per-email results. Defer to the formatter's dispatch.
-		return output.New(cmd.OutOrStdout(), false).Print(status)
+		return newOutput(cmd.OutOrStdout(), false).Print(status)
 	}
 
 	h := &output.Human{W: cmd.OutOrStdout(), Quiet: cctx.Quiet}

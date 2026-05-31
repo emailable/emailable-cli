@@ -179,7 +179,7 @@ func newSkillTargetsCmd() *cobra.Command {
 					}
 					rows = append(rows, row)
 				}
-				return (&output.JSON{W: cmd.OutOrStdout()}).Print(map[string]any{"targets": rows})
+				return newJSON(cmd.OutOrStdout()).Print(map[string]any{"targets": rows})
 			}
 			printTargetsTable(cmd.OutOrStdout(), ts)
 			return nil
@@ -253,7 +253,7 @@ func renderInstallResult(cmd *cobra.Command, res skill.Result) error {
 			}
 			links = append(links, row)
 		}
-		return (&output.JSON{W: cmd.OutOrStdout()}).Print(map[string]any{
+		return newJSON(cmd.OutOrStdout()).Print(map[string]any{
 			"skill_path": res.SkillPath,
 			"links":      links,
 		})

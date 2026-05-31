@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/emailable/emailable-cli/internal/env"
+	"github.com/emailable/emailable-cli/internal/output"
 	"github.com/emailable/emailable-cli/internal/ui"
 	"github.com/emailable/emailable-cli/internal/updater"
 	"github.com/spf13/cobra"
@@ -31,6 +32,23 @@ const releaseURLPrefix = "https://github.com/emailable/emailable-cli/releases/ta
 // jsonOutput is the value of the persistent --json flag. Commands read this
 // (rather than re-querying the cobra flag set) to pick an output formatter.
 var jsonOutput bool
+
+// jqExpr backs the --jq flag; jqQuery is its compiled form. --jq implies --json.
+var (
+	jqExpr  string
+	jqQuery *output.Query
+)
+
+func newOutput(w io.Writer, jsonMode bool) output.Formatter {
+	if jqQuery != nil {
+		return &output.JSON{W: w, Query: jqQuery}
+	}
+	return output.New(w, jsonMode)
+}
+
+func newJSON(w io.Writer) *output.JSON {
+	return &output.JSON{W: w, Query: jqQuery}
+}
 
 // apiKey is the value of the `login --api-key` local flag. It is deliberately
 // NOT a persistent root flag: credentials on argv would leak into shell history
@@ -205,6 +223,19 @@ func newRootCmd(v string) *cobra.Command {
 					jsonOutput = true
 				}
 			}
+			// Clear first so a query from an earlier in-process run can't leak
+			// into a command invoked without --jq.
+			jqQuery = nil
+			if jqExpr != "" {
+				// Set JSON mode before compiling so a bad-expression error
+				// still renders as JSON, honoring --jq's implied --json.
+				jsonOutput = true
+				q, err := output.CompileQuery(jqExpr)
+				if err != nil {
+					return NewInvalidInputf("invalid --jq expression: %v", err)
+				}
+				jqQuery = q
+			}
 			return nil
 		},
 	}
@@ -212,6 +243,7 @@ func newRootCmd(v string) *cobra.Command {
 	root.SetVersionTemplate("{{ .Version }}\n")
 
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Return JSON response")
+	root.PersistentFlags().StringVar(&jqExpr, "jq", "", "Filter JSON output with a jq `expression` (implies --json)")
 	root.PersistentFlags().BoolVar(&debugMode, "debug", false, "Dump HTTP requests/responses to stderr (also EMAILABLE_DEBUG)")
 	root.PersistentFlags().BoolVarP(&quietMode, "quiet", "q", false, "Suppress non-error human output (success lines, hints, progress)")
 

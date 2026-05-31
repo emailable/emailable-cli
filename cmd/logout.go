@@ -44,7 +44,7 @@ func runLogoutE(cmd *cobra.Command, _ []string) error {
 	}
 
 	if jsonOutput {
-		return (&output.JSON{W: cmd.OutOrStdout()}).Print(map[string]any{
+		return newJSON(cmd.OutOrStdout()).Print(map[string]any{
 			"logged_out": true,
 			"message":    "Logged out.",
 		})

@@ -265,6 +265,23 @@ unchanged — the CLI doesn't re-shape or add fields. See the API docs for
 the field reference. Error payloads and NDJSON stream events (below) are
 CLI-specific.
 
+### Filtering with `--jq`
+
+Pass a [jq](https://jqlang.github.io/jq/) expression to `--jq` to filter the
+JSON output in place — no external `jq` binary required (handy on Windows and
+in minimal containers). `--jq` implies `--json`.
+
+```bash
+emailable verify jarrett@emailable.com --jq '.state'
+emailable account status --jq '.available_credits'
+emailable batch get 5cfc... --jq '.emails[] | select(.state == "deliverable") | .email'
+```
+
+A string result is printed raw (unquoted, one per line), like `jq -r`, so it
+drops straight into a script. Objects and arrays are printed as JSON. Combined
+with `--stream`, the filter runs against each NDJSON event as it arrives (see
+below).
+
 ### NDJSON streaming
 
 `batch verify --stream` and `batch get --stream` emit one JSON object per
@@ -282,6 +299,15 @@ emailable batch verify emails.csv --stream
 {"event":"progress","id":"5cfc...","processed":100,"total":1000}
 {"event":"progress","id":"5cfc...","processed":500,"total":1000}
 {"event":"complete","id":"5cfc...","status":"complete","reason_counts":{...},"emails":[...]}
+```
+
+Add `--jq` to filter each event as it streams. The filter sees the event
+envelope (`event`, `id`, …), so guard on the event type; events the filter
+doesn't match are skipped:
+
+```bash
+emailable batch verify emails.csv --stream \
+  --jq 'select(.event == "complete") | .emails[] | .email'
 ```
 
 ### Errors

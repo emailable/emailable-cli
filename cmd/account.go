@@ -42,7 +42,7 @@ func newAccountCmd() *cobra.Command {
 				OwnerEmail:       a.OwnerEmail,
 				AvailableCredits: a.AvailableCredits,
 			}
-			return output.New(cmd.OutOrStdout(), jsonOutput).Print(view)
+			return newOutput(cmd.OutOrStdout(), jsonOutput).Print(view)
 		},
 	}
 

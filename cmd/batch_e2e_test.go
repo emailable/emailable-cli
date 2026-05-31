@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/emailable/emailable-cli/internal/api"
+	"github.com/emailable/emailable-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -536,7 +537,7 @@ func TestSubmitBatchOptionsFromFlags_AllSet(t *testing.T) {
 // through the network path.
 func TestBatchStreamer_Events(t *testing.T) {
 	var buf bytes.Buffer
-	s := &batchStreamer{w: &buf}
+	s := &batchStreamer{f: &output.JSON{W: &buf, Compact: true}}
 	if err := s.emitSubmitted("bch_x"); err != nil {
 		t.Fatal(err)
 	}
@@ -569,7 +570,7 @@ func TestBatchStreamer_Events(t *testing.T) {
 // emitComplete (DownloadFile populated, Emails empty).
 func TestBatchStreamer_CompleteDownloadFile(t *testing.T) {
 	var buf bytes.Buffer
-	s := &batchStreamer{w: &buf}
+	s := &batchStreamer{f: &output.JSON{W: &buf, Compact: true}}
 	if err := s.emitComplete("bch_big", &api.BatchStatus{
 		DownloadFile: "https://files.example/big.csv",
 	}); err != nil {
