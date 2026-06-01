@@ -118,6 +118,37 @@ func TestWriteVersionJSON_OmitsEmptyFields(t *testing.T) {
 	}
 }
 
+// TestVersionDisplay_ReleaseURL verifies the release link only appears for a
+// published-tag version, not for snapshot / pseudo-version / dev builds.
+func TestVersionDisplay_ReleaseURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		version string
+		wantURL bool
+	}{
+		{"release", "0.3.0", true},
+		{"snapshot", "0.3.0-next", false},
+		{"pseudo", "0.3.1-0.20260601120000-abcdef123456", false},
+		{"dev", "dev", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := version
+			version = tc.version
+			t.Cleanup(func() { version = prev })
+
+			got := versionDisplay()
+			hasURL := strings.Contains(got, releaseURLPrefix)
+			if hasURL != tc.wantURL {
+				t.Errorf("version %q: got URL=%v, want %v\noutput: %q", tc.version, hasURL, tc.wantURL, got)
+			}
+			if tc.wantURL && !strings.Contains(got, releaseURLPrefix+"v"+tc.version) {
+				t.Errorf("version %q: expected URL with tag v%s, got %q", tc.version, tc.version, got)
+			}
+		})
+	}
+}
+
 // resetJSONFlag ensures the package-level jsonOutput is clean for each test
 // and restored afterward. The flag is global state shared with the cobra
 // PersistentFlags binding, so tests that run after a --json invocation would

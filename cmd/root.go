@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -28,6 +29,10 @@ var (
 
 // releaseURLPrefix is the GitHub releases URL we link to from --version output.
 const releaseURLPrefix = "https://github.com/emailable/emailable-cli/releases/tag/"
+
+// Only a clean semver release has a GitHub tag to link to; snapshot and
+// pseudo-version builds would 404.
+var releaseVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
 // jsonOutput is the value of the persistent --json flag. Commands read this
 // (rather than re-querying the cobra flag set) to pick an output formatter.
@@ -100,14 +105,10 @@ func versionDisplay() string {
 		b.WriteString("]")
 	}
 
-	if v != "" && v != "dev" {
-		tag := v
-		if !strings.HasPrefix(tag, "v") {
-			tag = "v" + tag
-		}
+	if releaseVersion.MatchString(v) {
 		b.WriteString("\n")
 		b.WriteString(releaseURLPrefix)
-		b.WriteString(tag)
+		b.WriteString("v" + v)
 	}
 
 	return b.String()
