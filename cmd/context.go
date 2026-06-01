@@ -143,7 +143,7 @@ func (c *cmdCtx) withRefreshNotice(w io.Writer) *cmdCtx {
 //     is prompted to log in again; other failures propagate verbatim.
 //  3. errNotAuthenticated — the user must `emailable login` or set an
 //     API key.
-func (c *cmdCtx) requireAuth() (*api.Client, error) {
+func (c *cmdCtx) requireAuth(ctx context.Context) (*api.Client, error) {
 	if key, _ := c.effectiveAPIKey(); key != "" {
 		return api.NewWithOptions(c.Env.APIBaseURL, key, c.clientOptions()), nil
 	}
@@ -151,7 +151,7 @@ func (c *cmdCtx) requireAuth() (*api.Client, error) {
 		return nil, errNotAuthenticated
 	}
 	if c.needsRefresh() {
-		if err := c.refresh(context.Background()); err != nil {
+		if err := c.refresh(ctx); err != nil {
 			if errors.Is(err, oauth.ErrInvalidGrant) {
 				return nil, errNotAuthenticated
 			}

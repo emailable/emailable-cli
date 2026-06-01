@@ -48,6 +48,31 @@ func TestLogin_APIKey_HappyPath(t *testing.T) {
 	}
 }
 
+func TestLogin_APIKey_QuietSuppressesSuccess(t *testing.T) {
+	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"owner_email":       "owner@example.com",
+			"available_credits": 100,
+		})
+	}))
+
+	res := runRoot(t, "login", "--api-key", "sk_login_xxx", "--quiet")
+	if res.Err != nil {
+		t.Fatalf("execute: %v\nstderr: %s", res.Err, res.Stderr.String())
+	}
+	if strings.TrimSpace(res.Stdout.String()) != "" {
+		t.Errorf("expected quiet login to suppress success stdout, got %q", res.Stdout.String())
+	}
+
+	creds, err := credentials.Load(env.CredentialsPath)
+	if err != nil {
+		t.Fatalf("load credentials: %v", err)
+	}
+	if creds.APIKey != "sk_login_xxx" {
+		t.Errorf("APIKey not saved: %+v", creds)
+	}
+}
+
 // TestLogin_APIKey_RejectedBy401: a 401 from /v1/account must NOT persist
 // the bad key.
 func TestLogin_APIKey_RejectedBy401(t *testing.T) {

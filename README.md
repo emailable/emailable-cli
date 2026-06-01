@@ -324,6 +324,7 @@ Human mode:
 ```
 Error: Invalid email (HTTP 422)
 Error: Too Many Requests (HTTP 429) (retry in 60s)
+Pending: Your request is taking longer than normal. Please send your request again.
 Error: dial tcp: connection refused
 ```
 
@@ -344,8 +345,8 @@ Non-API errors (network, config, validation) omit `status_code`:
 
 When the server returns rate-limit headers (`RateLimit-Limit`,
 `RateLimit-Remaining`, `RateLimit-Reset` — typically on `429`), they're
-attached as a sibling `rate_limit` field. `reset` is seconds until the
-window resets:
+attached as a sibling `rate_limit` field. `reset` is the documented Unix
+timestamp, in seconds, when the window resets:
 
 ```json
 {
@@ -369,6 +370,7 @@ through verbatim.
 | `not_found`         | Unknown resource (HTTP 404)                      |
 | `invalid_input`     | Bad request / validation failure (HTTP 400, 422) |
 | `rate_limited`      | Throttled by the server (HTTP 429)               |
+| `try_again`         | Verification is still processing (HTTP 249)      |
 | `server_error`      | Server-side failure (HTTP 5xx)                   |
 | `network`           | Connection / DNS / TLS failure                   |
 | `unknown`           | Anything else                                    |
@@ -380,16 +382,17 @@ through verbatim.
 | `0`  | Success                                        |
 | `1`  | Generic failure (`unknown` and anything unmapped) |
 | `2`  | Authentication failure (`not_authenticated`, `forbidden`) |
-| `3`  | Rate limited (`rate_limited`)                  |
+| `3`  | Retry later (`rate_limited`, `try_again`)      |
 | `4`  | Invalid input or not found (`invalid_input`, `not_found`) |
 | `5`  | Network or server failure (`network`, `server_error`) |
 
-#### Rate-limit retry
+#### Transient retry
 
-The HTTP client automatically retries `429` responses (up to twice by
-default) honoring `RateLimit-Reset` for the backoff window (falls back to
-`Retry-After`, then to exponential). Sustained rate limiting still surfaces
-as an error with exit code `3` once the retry budget is exhausted.
+The HTTP client automatically retries transient responses (up to twice by
+default). For `429`, it honors `RateLimit-Reset` for the backoff window
+(falling back to exponential when the header is absent or stale). For `249`,
+it retries briefly, then surfaces `try_again` with exit code `3` so scripts
+know no verification result was produced.
 
 ### Debug logging
 

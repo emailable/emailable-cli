@@ -68,3 +68,19 @@ func TestRootCommand_HelpListsPersistentFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestNewRootCmd_ResetsFlagState(t *testing.T) {
+	jsonOutput = true
+	jqExpr = ".version"
+	jqQuery = mustCompile(t, ".version")
+	apiKey = "sk_leaked"
+	debugMode = true
+	quietMode = true
+
+	_ = newRootCmd("dev")
+
+	if jsonOutput || jqExpr != "" || jqQuery != nil || apiKey != "" || debugMode || quietMode {
+		t.Fatalf("expected root flag globals to reset, got json=%v jqExpr=%q jqQuery=%v apiKey=%q debug=%v quiet=%v",
+			jsonOutput, jqExpr, jqQuery, apiKey, debugMode, quietMode)
+	}
+}

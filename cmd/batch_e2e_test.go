@@ -117,8 +117,8 @@ func TestBatchVerify_FromStdin(t *testing.T) {
 	}
 }
 
-// TestBatchVerify_FlagsForwarded validates --url, --retries, --response-fields
-// are threaded into the submit body.
+// TestBatchVerify_FlagsForwarded validates --url, --retries, and
+// --response-fields are threaded into the submit body.
 func TestBatchVerify_FlagsForwarded(t *testing.T) {
 	var capturedForm string
 	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

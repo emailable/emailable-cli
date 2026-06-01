@@ -201,7 +201,7 @@ func loginWithAPIKey(cmd *cobra.Command, ctx *cmdCtx, key string) error {
 		return err
 	}
 
-	h := &output.Human{W: cmd.OutOrStdout()}
+	h := &output.Human{W: cmd.OutOrStdout(), Quiet: ctx.Quiet}
 	if acc != nil && acc.OwnerEmail != "" {
 		return h.Success(fmt.Sprintf("Logged in as %s (API key)", acc.OwnerEmail))
 	}

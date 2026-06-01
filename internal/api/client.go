@@ -22,9 +22,9 @@ import (
 // hosts, but bounded so a hung connection can't wedge the CLI forever.
 const defaultRequestTimeout = 60 * time.Second
 
-// Retry knobs for 429 handling. maxRetrySleep caps the per-attempt wait so a
-// misbehaving server can't wedge us for hours; minRetrySleep ensures a brief
-// pause even when the server returned an unparseable / zero Reset.
+// Retry knobs for transient API responses. maxRetrySleep caps the per-attempt
+// wait so a misbehaving server can't wedge us for hours; minRetrySleep ensures a
+// brief pause even when the server returned an unparseable / zero Reset.
 const (
 	defaultMaxRetries = 2
 	maxRetrySleep     = 60 * time.Second
@@ -92,9 +92,9 @@ func NewWithOptions(baseURL, accessToken string, opts Options) *Client {
 // do issues an HTTP request with the configured auth headers and decodes a
 // JSON response. Non-2xx responses return an *Error.
 //
-// 429 responses trigger an automatic retry honoring RateLimit-Reset, capped
-// at c.maxRetries attempts. Each retry rebuilds the request from scratch
-// since the form body Reader has already been consumed.
+// 429 responses trigger an automatic retry honoring the RateLimit-Reset
+// timestamp, capped at c.maxRetries attempts. Each retry rebuilds the request
+// from scratch since the form body Reader has already been consumed.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, form url.Values, out any) error {
 	fullURL := strings.TrimRight(c.baseURL, "/") + path
 	if len(query) > 0 {
@@ -132,7 +132,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 		c.dumpResponse(resp, respBody)
 
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 && !isRetryableStatus(resp.StatusCode) {
 			if out == nil {
 				return nil
 			}
@@ -158,10 +158,10 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 		lastErr = apiErr
 
-		if resp.StatusCode != 429 || attempt == c.maxRetries {
+		if !isRetryableStatus(resp.StatusCode) || attempt == c.maxRetries {
 			return apiErr
 		}
-		sleep := backoffFor(apiErr.RateLimit, resp.Header.Get("Retry-After"), attempt)
+		sleep := backoffFor(apiErr.RateLimit, attempt, time.Now())
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -171,19 +171,21 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	return lastErr
 }
 
-// backoffFor picks how long to wait before retrying a 429. Prefers the
-// IETF draft RateLimit-Reset header value, falls back to the older
-// Retry-After header, then to an exponential default. A small random jitter
-// is added so concurrent CLIs don't synchronize on the same retry instant.
+func isRetryableStatus(status int) bool {
+	return status == 249 || status == http.StatusTooManyRequests
+}
+
+// backoffFor picks how long to wait before retrying a transient API response.
+// Prefers the documented RateLimit-Reset timestamp, then falls back to an
+// exponential default. A small random jitter is added so concurrent CLIs don't
+// synchronize on the same retry instant.
 // The result is clamped to [minRetrySleep, maxRetrySleep].
-func backoffFor(rl *RateLimit, retryAfter string, attempt int) time.Duration {
+func backoffFor(rl *RateLimit, attempt int, now time.Time) time.Duration {
 	base := time.Duration(0)
-	switch {
-	case rl != nil && rl.Reset > 0:
-		base = time.Duration(rl.Reset) * time.Second
-	case retryAfter != "":
-		if n, err := strconv.Atoi(retryAfter); err == nil && n > 0 {
-			base = time.Duration(n) * time.Second
+	if rl != nil && rl.Reset > 0 {
+		resetAt := time.Unix(int64(rl.Reset), 0)
+		if resetAt.After(now) {
+			base = resetAt.Sub(now)
 		}
 	}
 	if base == 0 {
@@ -250,9 +252,10 @@ func indentLines(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// parseRateLimit reads the IETF draft `RateLimit-*` headers off h and returns
-// a populated *RateLimit when at least one is present. Missing or unparseable
-// values stay zero rather than failing.
+// parseRateLimit reads the documented `RateLimit-*` headers off h and returns a
+// populated *RateLimit when at least one is present. Missing or unparseable
+// values stay zero rather than failing. RateLimit-Reset is a Unix timestamp in
+// seconds.
 func parseRateLimit(h http.Header) *RateLimit {
 	limit := h.Get("RateLimit-Limit")
 	remaining := h.Get("RateLimit-Remaining")
