@@ -250,9 +250,9 @@ func scoreBadgeBG(score int, state string) lipgloss.Color {
 	}
 }
 
-// PrintVerifyResult renders a single verify result. The `user` and `duration`
-// fields are intentionally omitted here; JSON output retains them.
-// PrintVerifyResult renders r as a labeled card with state, score, and attribute sections.
+// PrintVerifyResult renders r as a labeled card with state, score, and
+// attribute sections. The user and duration fields are intentionally omitted
+// here; JSON output retains them.
 func (h *Human) PrintVerifyResult(r *api.VerifyResult) error {
 	stf := styler(h.W)
 	labelStyle := stf(lipgloss.NewStyle().Foreground(lipgloss.Color("241")))

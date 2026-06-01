@@ -127,23 +127,6 @@ func isNetworkError(err error) bool {
 	return errors.As(err, &netErr)
 }
 
-// renderError writes a terminal-friendly representation of err to w.
-//
-// JSON mode: emits a single line of JSON to stderr, always flat (no envelope).
-// For *api.Error with a JSON-object body it passes the body through verbatim,
-// merging in a `rate_limit` field when rate-limit headers were captured. For
-// non-object / non-JSON bodies it synthesizes a flat object:
-//
-//	{"message":"...","status_code":N,"code":"..."}
-//
-// A stable `code` field is always added (preserving any code the API
-// returned). For non-API errors (network, config, validation) it emits a
-// flat object with `message` + `code`. The shape is intentionally consistent
-// across paths so agents can parse a single schema.
-//
-// Human mode: prints `Error: <message> (HTTP <status>)` for *api.Error and
-// `Error: <message>` otherwise. On 429 with a known reset timestamp we append a
-// retry hint so the user knows when to retry.
 func renderError(w io.Writer, err error, jsonMode bool) {
 	if err == nil {
 		return

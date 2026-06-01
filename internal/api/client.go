@@ -19,9 +19,6 @@ import (
 // defaultRequestTimeout is generous because real-time verify can spend ~30s SMTP-probing slow MX hosts.
 const defaultRequestTimeout = 60 * time.Second
 
-// Retry knobs for transient API responses. maxRetrySleep caps the per-attempt
-// wait so a misbehaving server can't wedge us for hours; minRetrySleep ensures a
-// brief pause even when the server returned an unparseable / zero Reset.
 const (
 	defaultMaxRetries = 2
 	maxRetrySleep     = 60 * time.Second
@@ -77,12 +74,6 @@ func NewWithOptions(baseURL, accessToken string, opts Options) *Client {
 	}
 }
 
-// do issues an HTTP request with the configured auth headers and decodes a
-// JSON response. Non-2xx responses return an *Error.
-//
-// 429 responses trigger an automatic retry honoring the RateLimit-Reset
-// timestamp, capped at c.maxRetries attempts. Each retry rebuilds the request
-// from scratch since the form body Reader has already been consumed.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, form url.Values, out any) error {
 	fullURL := strings.TrimRight(c.baseURL, "/") + path
 	if len(query) > 0 {
@@ -160,11 +151,6 @@ func isRetryableStatus(status int) bool {
 	return status == 249 || status == http.StatusTooManyRequests
 }
 
-// backoffFor picks how long to wait before retrying a transient API response.
-// Prefers the documented RateLimit-Reset timestamp, then falls back to an
-// exponential default. A small random jitter is added so concurrent CLIs don't
-// synchronize on the same retry instant.
-// The result is clamped to [minRetrySleep, maxRetrySleep].
 func backoffFor(rl *RateLimit, attempt int, now time.Time) time.Duration {
 	base := time.Duration(0)
 	if rl != nil && rl.Reset > 0 {
@@ -230,10 +216,6 @@ func indentLines(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// parseRateLimit reads the documented `RateLimit-*` headers off h and returns a
-// populated *RateLimit when at least one is present. Missing or unparseable
-// values stay zero rather than failing. RateLimit-Reset is a Unix timestamp in
-// seconds.
 func parseRateLimit(h http.Header) *RateLimit {
 	limit := h.Get("RateLimit-Limit")
 	remaining := h.Get("RateLimit-Remaining")

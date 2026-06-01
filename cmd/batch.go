@@ -301,12 +301,7 @@ const (
 	fastPollWindow   = 10 * time.Second
 )
 
-// waitForCompletion polls the batch status until processing is complete and
-// returns the final status. In non-JSON mode it renders a progress bar; when sw
-// is non-nil it emits `progress` events instead and suppresses the bar.
-//
-// Progress output goes to stderr so piping stdout (e.g. `verify --wait >
-// results.json`) doesn't mix the bar into the result payload.
+// waitForCompletion polls until completion. Progress goes to stderr so piped stdout stays clean.
 func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonMode bool, sw *batchStreamer, progressOut io.Writer) (*api.BatchStatus, error) {
 	if progressOut == nil {
 		progressOut = os.Stderr

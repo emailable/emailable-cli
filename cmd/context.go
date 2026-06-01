@@ -105,16 +105,6 @@ func (c *cmdCtx) withRefreshNotice(w io.Writer) *cmdCtx {
 	return c
 }
 
-// requireAuth returns an *api.Client configured for the active environment.
-// Resolution order:
-//  1. EMAILABLE_API_KEY / stored API key — non-interactive auth; no refresh
-//     path.
-//  2. Stored OAuth access token — refreshed transparently when close to
-//     expiry. A failed refresh caused by a permanently-dead refresh token
-//     (oauth.ErrInvalidGrant) collapses to errNotAuthenticated so the user
-//     is prompted to log in again; other failures propagate verbatim.
-//  3. errNotAuthenticated — the user must `emailable login` or set an
-//     API key.
 func (c *cmdCtx) requireAuth(ctx context.Context) (*api.Client, error) {
 	if key, _ := c.effectiveAPIKey(); key != "" {
 		return api.NewWithOptions(c.Env.APIBaseURL, key, c.clientOptions()), nil

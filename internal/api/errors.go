@@ -8,8 +8,7 @@ import (
 // ErrUnauthenticated is returned when the API responds with a 401 status.
 var ErrUnauthenticated = errors.New("api: not authenticated")
 
-// RateLimit captures the documented `RateLimit-*` response headers. All fields
-// are zero when the corresponding header was absent or unparseable.
+// RateLimit holds the parsed RateLimit-* response headers.
 type RateLimit struct {
 	Limit     int // requests allowed per window
 	Remaining int // requests left in the current window

@@ -33,8 +33,6 @@ const releaseURLPrefix = "https://github.com/emailable/emailable-cli/releases/ta
 // pseudo-version builds would 404.
 var releaseVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
-// jsonOutput is the value of the persistent --json flag. Commands read this
-// (rather than re-querying the cobra flag set) to pick an output formatter.
 var jsonOutput bool
 
 var (
@@ -180,10 +178,8 @@ const longDescription = "Command-line interface for Emailable's email verificati
 func newRootCmd(v string) *cobra.Command {
 	resetRootFlagState()
 
-	// Swap the package-level version so versionDisplay and the version
-	// subcommand's lazily-read RunE observe v. Intentionally not restored:
-	// tests rely on the swap persisting across Execute and don't run
-	// newRootCmd in parallel, so leaving it set is safe.
+	// Intentionally not restored: tests rely on the swap persisting across
+	// Execute and don't run newRootCmd in parallel, so leaving it set is safe.
 	version = v
 
 	root := &cobra.Command{
