@@ -5,6 +5,10 @@
 This is the official CLI to work with [Emailable](https://emailable.com) from
 the command line.
 
+> [!WARNING]
+> This is prerelease software and is not yet considered production ready.
+> Commands, flags, and output may change without notice between releases.
+
 ## Documentation
 
 See the [CLI docs](https://emailable.com/docs/api/?code_language=cli).
