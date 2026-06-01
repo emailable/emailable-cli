@@ -1,6 +1,4 @@
-// Package skill installs the embedded SKILL.md into agent skill dirs.
-// Canonical copy lives at ~/.agents/skills/emailable/; other targets
-// symlink back so re-installing on upgrade touches one place.
+// Package skill installs the embedded SKILL.md into agent skill dirs; other targets symlink the canonical copy.
 package skill
 
 import (
@@ -14,14 +12,14 @@ import (
 )
 
 const (
-	Name              = "emailable"
+	// Name is the skill name used as the directory and embed path.
+	Name = "emailable"
+	// FileName is the skill document filename written into each target directory.
 	FileName          = "SKILL.md"
 	canonicalTargetID = "agents-shared"
 )
 
-// Location is one known install target. Dir may begin with "~/".
-// Detect, when non-nil, gates auto-linking on whether the agent looks
-// installed.
+// Location describes a skill installation target (directory and detection predicate).
 type Location struct {
 	ID     string
 	Name   string
@@ -30,8 +28,7 @@ type Location struct {
 	Detect func() bool
 }
 
-// Targets is recomputed each call so CODEX_HOME and CWD-relative
-// project paths reflect current state.
+// Targets returns all known skill installation locations.
 func Targets() []Location {
 	return []Location{
 		{ID: canonicalTargetID, Name: "Agents (Shared)", Dir: "~/.agents/skills/" + Name, Global: true, Detect: dirExists("~/.agents")},
@@ -43,6 +40,7 @@ func Targets() []Location {
 	}
 }
 
+// LookupTarget returns the Location with the given ID, or false if not found.
 func LookupTarget(id string) (Location, bool) {
 	for _, t := range Targets() {
 		if t.ID == id {
@@ -52,13 +50,13 @@ func LookupTarget(id string) (Location, bool) {
 	return Location{}, false
 }
 
+// Canonical returns the canonical (shared agents) installation location.
 func Canonical() Location {
 	loc, _ := LookupTarget(canonicalTargetID)
 	return loc
 }
 
-// Content panics on miss — go:embed verifies at compile time, so a
-// runtime read failure is a broken build.
+// Content panics on miss: go:embed guarantees the file exists, so a runtime failure means a broken build.
 func Content() string {
 	data, err := skills.FS.ReadFile(Name + "/" + FileName)
 	if err != nil {
@@ -67,17 +65,20 @@ func Content() string {
 	return string(data)
 }
 
+// Result holds the outcome of an install operation.
 type Result struct {
 	SkillPath string
 	Links     []LinkResult
 }
 
+// LinkResult describes a single symlink (or copy fallback) created during install.
 type LinkResult struct {
 	Target Location
 	Path   string
 	Notice string // non-empty when symlink fell back to a copy
 }
 
+// InstallToDir writes SKILL.md into dir, creating the directory if needed.
 func InstallToDir(dir string) (string, error) {
 	abs, err := Expand(dir)
 	if err != nil {
@@ -93,6 +94,7 @@ func InstallToDir(dir string) (string, error) {
 	return file, nil
 }
 
+// InstallToFile writes SKILL.md to the exact file path, creating parent directories if needed.
 func InstallToFile(path string) (string, error) {
 	abs, err := Expand(path)
 	if err != nil {
@@ -107,9 +109,7 @@ func InstallToFile(path string) (string, error) {
 	return abs, nil
 }
 
-// NormalizeCustomPath turns a free-form path into a SKILL.md file
-// path: .md verbatim, /emailable[/] gets SKILL.md appended, anything
-// else gets emailable/SKILL.md appended.
+// NormalizeCustomPath returns the canonical SKILL.md file path for a user-supplied directory or file path.
 func NormalizeCustomPath(input string) string {
 	p := strings.TrimSpace(input)
 	if strings.HasSuffix(strings.ToLower(p), ".md") {
@@ -122,26 +122,27 @@ func NormalizeCustomPath(input string) string {
 	return filepath.Join(p, Name, FileName)
 }
 
+// InstallCanonical installs SKILL.md to the canonical shared-agents directory.
 func InstallCanonical() (string, error) {
 	return InstallToDir(Canonical().Dir)
 }
 
-// InstallDetected links only global agents whose dirs already exist.
-// Project targets are skipped — CWD may not be the project the user
-// meant.
+// InstallDetected links only global agents whose dirs already exist; project targets are skipped
+// because CWD may not be the intended project.
 func InstallDetected() (Result, error) {
 	return installMany(func(t Location) bool {
 		return t.Global && t.ID != canonicalTargetID && (t.Detect == nil || t.Detect())
 	})
 }
 
-// InstallAll links every global target, detected or not.
+// InstallAll installs SKILL.md to all known global targets, detected or not.
 func InstallAll() (Result, error) {
 	return installMany(func(t Location) bool {
 		return t.Global && t.ID != canonicalTargetID
 	})
 }
 
+// InstallOne installs SKILL.md to a single explicit target location.
 func InstallOne(target Location) (Result, error) {
 	return installMany(func(t Location) bool {
 		return t.ID == target.ID && t.ID != canonicalTargetID
@@ -168,9 +169,7 @@ func installMany(keep func(Location) bool) (Result, error) {
 	return res, nil
 }
 
-// linkToCanonical symlinks target.Dir → canonical, with a SKILL.md
-// copy fallback for hosts that can't symlink (unprivileged Windows).
-// Assumes InstallCanonical already ran.
+// linkToCanonical symlinks target.Dir → canonical; falls back to a file copy on hosts that can't symlink.
 func linkToCanonical(target Location) (LinkResult, error) {
 	targetDir, err := Expand(target.Dir)
 	if err != nil {
@@ -186,8 +185,7 @@ func linkToCanonical(target Location) (LinkResult, error) {
 	if err := os.MkdirAll(filepath.Dir(targetDir), 0o755); err != nil {
 		return LinkResult{}, fmt.Errorf("create symlink parent: %w", err)
 	}
-	// Re-install must converge: drop whatever's there (file, dir, or symlink).
-	_ = os.RemoveAll(targetDir)
+	_ = os.RemoveAll(targetDir) // drop whatever's there so re-install converges
 	if err := os.Symlink(canonicalDir, targetDir); err == nil {
 		return LinkResult{Target: target, Path: targetDir}, nil
 	} else {
@@ -207,7 +205,7 @@ func linkToCanonical(target Location) (LinkResult, error) {
 	}
 }
 
-// Expand resolves "~/" and returns an absolute path.
+// Expand resolves a path that may start with ~ to an absolute path.
 func Expand(path string) (string, error) {
 	if path == "~" {
 		home, err := os.UserHomeDir()

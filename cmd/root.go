@@ -27,7 +27,6 @@ var (
 	buildDate = ""
 )
 
-// releaseURLPrefix is the GitHub releases URL we link to from --version output.
 const releaseURLPrefix = "https://github.com/emailable/emailable-cli/releases/tag/"
 
 // Only a clean semver release has a GitHub tag to link to; snapshot and
@@ -38,7 +37,6 @@ var releaseVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 // (rather than re-querying the cobra flag set) to pick an output formatter.
 var jsonOutput bool
 
-// jqExpr backs the --jq flag; jqQuery is its compiled form. --jq implies --json.
 var (
 	jqExpr  string
 	jqQuery *output.Query
@@ -81,12 +79,7 @@ const (
 	groupHelpers = "helpers" // built-in cobra commands (help, completion)
 )
 
-// versionDisplay returns the multi-line version blurb used by both `--version`
-// and the `version` subcommand.
 func versionDisplay() string {
-	// Use the resolved version (collectVersionInfo falls back to the Go
-	// toolchain's module version for `go install` builds where ldflags
-	// weren't injected).
 	v := collectVersionInfo().Version
 
 	var b strings.Builder
@@ -114,10 +107,6 @@ func versionDisplay() string {
 	return b.String()
 }
 
-// versionInfo holds the structured pieces that make up the version blurb.
-// Used by versionExtras (for the human string) and by `version --json` to
-// emit a machine-readable representation. Fields are zero-valued when the
-// corresponding data isn't available (e.g. no VCS info in a stripped build).
 type versionInfo struct {
 	Version   string
 	BuildDate string // either ldflags-injected buildDate or vcs.time (YYYY-MM-DD)
@@ -125,7 +114,6 @@ type versionInfo struct {
 	Dirty     bool   // vcs.modified — only meaningful when Commit is set
 }
 
-// collectVersionInfo gathers version metadata from ldflags and VCS build info.
 func collectVersionInfo() versionInfo {
 	vi := versionInfo{Version: version, BuildDate: buildDate, Commit: commit}
 	info, ok := debug.ReadBuildInfo()
@@ -169,9 +157,6 @@ func collectVersionInfo() versionInfo {
 	return vi
 }
 
-// versionExtras returns the date / commit info shown in parens after the
-// version number. Prefers ldflags-injected values (GoReleaser); falls back to
-// runtime/debug.ReadBuildInfo VCS data for local checkouts.
 func versionExtras() string {
 	vi := collectVersionInfo()
 	var parts []string
@@ -188,13 +173,10 @@ func versionExtras() string {
 	return strings.Join(parts, ", ")
 }
 
-// longDescription is the root help blurb. Intentionally short and feature-
-// agnostic so it doesn't go stale as the product grows.
 const longDescription = "Command-line interface for Emailable's email verification API."
 
-// newRootCmd returns a fresh root cobra.Command. Used by Execute and by tests.
-// The v argument lets tests inject a deterministic version string; production
-// callers pass the package-level `version` (set via ldflags).
+// newRootCmd returns a fresh root cobra.Command. The v argument lets tests
+// inject a deterministic version string; production callers pass `version`.
 func newRootCmd(v string) *cobra.Command {
 	resetRootFlagState()
 
@@ -211,11 +193,8 @@ func newRootCmd(v string) *cobra.Command {
 		Version:       versionDisplay(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		// A bare `emailable` either onboards a logged-out user on a TTY or
-		// prints help; see runRootDefault.
-		RunE: runRootDefault,
-		// Resolve the default output format before any RunE runs. Precedence:
-		// --json flag > EMAILABLE_OUTPUT > config `output` > "human".
+		RunE:          runRootDefault,
+		// Precedence: --json flag > EMAILABLE_OUTPUT > config `output` > "human".
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			if !cmd.Flags().Changed("json") {
 				merged, err := env.MergedConfig()
@@ -226,12 +205,10 @@ func newRootCmd(v string) *cobra.Command {
 					jsonOutput = true
 				}
 			}
-			// Clear first so a query from an earlier in-process run can't leak
-			// into a command invoked without --jq.
+			// Clear first so a query from an earlier in-process run can't leak.
 			jqQuery = nil
 			if jqExpr != "" {
-				// Set JSON mode before compiling so a bad-expression error
-				// still renders as JSON, honoring --jq's implied --json.
+				// Set JSON mode before compiling so a bad-expression error renders as JSON.
 				jsonOutput = true
 				q, err := output.CompileQuery(jqExpr)
 				if err != nil {
@@ -242,7 +219,6 @@ func newRootCmd(v string) *cobra.Command {
 			return nil
 		},
 	}
-	// Print just the blurb; versionDisplay already includes "emailable version ".
 	root.SetVersionTemplate("{{ .Version }}\n")
 
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Return JSON response")
@@ -250,8 +226,6 @@ func newRootCmd(v string) *cobra.Command {
 	root.PersistentFlags().BoolVar(&debugMode, "debug", false, "Dump HTTP requests/responses to stderr (also EMAILABLE_DEBUG)")
 	root.PersistentFlags().BoolVarP(&quietMode, "quiet", "q", false, "Suppress non-error human output (success lines, hints, progress)")
 
-	// Register groups so cobra knows about them; the custom usage func is
-	// what actually renders them under gh-style headings.
 	root.AddGroup(
 		&cobra.Group{ID: groupCore, Title: "CORE COMMANDS"},
 		&cobra.Group{ID: groupAuth, Title: "AUTHENTICATION COMMANDS"},
@@ -280,12 +254,8 @@ func newRootCmd(v string) *cobra.Command {
 
 	root.AddCommand(verify, batch, account, login, logout, status, versionSub, skillSub, newManCmd())
 
-	// Hide cobra's auto-generated `completion` command from --help. It's
-	// still callable, just doesn't clutter the curated command list.
 	root.CompletionOptions.HiddenDefaultCmd = true
 
-	// Route both usage errors and --help/`help` through the same renderer so
-	// they produce identical output.
 	root.SetUsageFunc(func(c *cobra.Command) error {
 		return renderHelp(c, c.OutOrStderr())
 	})
@@ -306,29 +276,21 @@ func resetRootFlagState() {
 }
 
 // Execute runs the root command.
-//
-// Cobra's default error rendering is silenced so every RunE error is routed
-// through renderError (stderr only). Exit code is non-zero on any error.
 func Execute() {
 	root := newRootCmd(version)
 
-	// Skip the network call entirely for opt-outs knowable before flags parse.
-	// Uses IsTerminal, not IsTTY, so NO_COLOR (a styling pref) still gets checks.
-	// JSONMode/Quiet are flag-derived and gate only the notice, below.
+	// Uses IsTerminal (not IsTTY) so NO_COLOR doesn't suppress update checks.
 	preSkip := updater.ShouldSkip(updater.Conditions{
 		CurrentVersion: version,
 		StderrTTY:      ui.IsTerminal(root.ErrOrStderr()),
 		OptOut:         env.UpdateNotifierOptOut(),
 	})
 
-	// Kick off the update check in parallel with command execution; resultCh
-	// carries the outcome. The post-command grace block tolerates a hung check.
 	updCtx, updCancel := context.WithCancel(context.Background())
 	defer updCancel()
 	resultCh := make(chan updater.Result, 1)
 	if preSkip == updater.SkipNone {
-		// Run even when we may end up skipping the notice (e.g. JSON mode) so
-		// the cache still refreshes; the gate below decides on printing.
+		// Run even in JSON mode so the cache refreshes; the gate below decides on printing.
 		go func() {
 			resultCh <- updater.Check(updCtx, version, updater.CacheDir())
 		}()
@@ -336,8 +298,6 @@ func Execute() {
 
 	runErr := root.Execute()
 
-	// Re-check with the now-parsed flags to gate the notice. If the pre-flight
-	// already opted out, no goroutine ran, so keep that reason.
 	skip := preSkip
 	if skip == updater.SkipNone {
 		skip = updater.ShouldSkip(updater.Conditions{
@@ -351,8 +311,6 @@ func Execute() {
 
 	if runErr != nil {
 		renderError(root.ErrOrStderr(), runErr, jsonOutput)
-		// Best-effort notice on error path too, but only if the gate
-		// allows. Print BEFORE exiting; cap the wait at 1s.
 		if skip == updater.SkipNone {
 			waitAndNotify(root.ErrOrStderr(), resultCh, updCancel, updateNoticeWait)
 		}
@@ -360,23 +318,14 @@ func Execute() {
 	}
 
 	if skip != updater.SkipNone {
-		// Nothing to print; the background goroutine may still be running
-		// (e.g. mid-fetch). It'll be torn down by updCancel via the
-		// deferred cancel above, so we exit cleanly.
 		return
 	}
 	waitAndNotify(root.ErrOrStderr(), resultCh, updCancel, updateNoticeWait)
 }
 
-// updateNoticeWait is the hard ceiling on how long Execute will block at
-// shutdown waiting for the update goroutine to deliver a result. 1s matches
-// the spec ("up to 1 second extra"). If the check is still running when
-// this elapses, we abandon and exit — never delaying the user.
+// updateNoticeWait caps how long Execute blocks for the update check. 1s matches the spec.
 const updateNoticeWait = 1 * time.Second
 
-// waitAndNotify blocks for at most wait, then prints the update notice (if the
-// check finished and produced one) or returns silently. updCancel lets a
-// still-running fetch shut itself down promptly.
 func waitAndNotify(w io.Writer, resultCh <-chan updater.Result, updCancel context.CancelFunc, wait time.Duration) {
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
@@ -384,15 +333,10 @@ func waitAndNotify(w io.Writer, resultCh <-chan updater.Result, updCancel contex
 	case r := <-resultCh:
 		_ = updater.MaybeNotify(w, r, ui.IsTTY(w))
 	case <-timer.C:
-		// Still pending; abandon. Cancel the in-flight HTTP so the
-		// goroutine doesn't leak past process exit.
 		updCancel()
 	}
 }
 
-// renderHelp writes a gh-style help screen for c to w. TTY detection is
-// performed once against w so ANSI escape codes are suppressed when output
-// is piped, redirected, or captured by tests via a bytes.Buffer.
 func renderHelp(c *cobra.Command, w io.Writer) error {
 	tty := ui.IsTTY(w)
 	var b strings.Builder
@@ -406,7 +350,6 @@ func renderHelp(c *cobra.Command, w io.Writer) error {
 		b.WriteString("\n\n")
 	}
 
-	// USAGE
 	b.WriteString(ui.Heading("USAGE", tty))
 	b.WriteByte('\n')
 	b.WriteString("  ")
@@ -416,16 +359,12 @@ func renderHelp(c *cobra.Command, w io.Writer) error {
 	}
 	b.WriteString("\n\n")
 
-	// Command groups (only at levels with subcommands).
 	if c.HasAvailableSubCommands() {
 		writeGroupedCommands(&b, c, tty)
 	}
 
-	// Local flags only by default; persistent flags from root would repeat on
-	// every subcommand. On root, LocalFlags already includes the persistent ones.
 	flags := c.LocalFlags()
 	if c.HasAvailableInheritedFlags() {
-		// Merge inherited persistent flags so subcommand help still shows them.
 		flags.AddFlagSet(c.InheritedFlags())
 	}
 	if flags.HasAvailableFlags() {
@@ -435,9 +374,6 @@ func renderHelp(c *cobra.Command, w io.Writer) error {
 		b.WriteByte('\n')
 	}
 
-	// EXAMPLES + LEARN MORE only on the root command — gh follows the same
-	// pattern. Subcommand-specific examples live in each command's Example
-	// field if/when they're added.
 	if !c.HasParent() {
 		b.WriteString(ui.Heading("EXAMPLES", tty))
 		b.WriteByte('\n')
@@ -469,18 +405,12 @@ func renderHelp(c *cobra.Command, w io.Writer) error {
 	return err
 }
 
-// writeGroupedCommands renders the subcommand listing, grouped by GroupID and
-// in the same order groups were registered on the root. Commands without a
-// group (or whose group isn't registered on the parent) fall into a generic
-// "COMMANDS" section so nothing is dropped.
 func writeGroupedCommands(b *strings.Builder, c *cobra.Command, tty bool) {
 	type bucket struct {
 		title string
 		cmds  []*cobra.Command
 	}
 
-	// Preserve registered group order. For non-root commands (e.g. `batch`)
-	// there are no groups; everything falls through to the default bucket.
 	order := make([]string, 0, len(c.Groups()))
 	buckets := make(map[string]*bucket, len(c.Groups()))
 	for _, g := range c.Groups() {
@@ -500,7 +430,6 @@ func writeGroupedCommands(b *strings.Builder, c *cobra.Command, tty bool) {
 		}
 	}
 
-	// Find the widest name across all buckets for nice alignment.
 	pad := 0
 	for _, id := range order {
 		for _, sub := range buckets[id].cmds {
@@ -541,7 +470,6 @@ func writeGroupedCommands(b *strings.Builder, c *cobra.Command, tty bool) {
 	writeBucket(def)
 }
 
-// indent prefixes every line of s with prefix. Trailing newline is preserved.
 func indent(s, prefix string) string {
 	if s == "" {
 		return s

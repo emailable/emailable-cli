@@ -4,11 +4,12 @@ import (
 	"github.com/itchyny/gojq"
 )
 
-// Query wraps a compiled gojq program, keeping gojq out of the cmd layer.
+// Query holds a compiled jq expression ready to filter JSON values.
 type Query struct {
 	code *gojq.Code
 }
 
+// CompileQuery parses and compiles expr into a reusable Query.
 func CompileQuery(expr string) (*Query, error) {
 	parsed, err := gojq.Parse(expr)
 	if err != nil {
@@ -30,7 +31,7 @@ func (q *Query) run(input any) ([]any, error) {
 			break
 		}
 		if err, ok := v.(error); ok {
-			// A bare halt/halt_error ends the stream without erroring, per jq.
+			// halt/halt_error with no value ends the stream cleanly, per jq semantics.
 			if he, ok := err.(*gojq.HaltError); ok && he.Value() == nil {
 				break
 			}

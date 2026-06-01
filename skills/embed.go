@@ -3,5 +3,7 @@ package skills
 
 import "embed"
 
+// FS holds the embedded skill tree.
+//
 //go:embed emailable
 var FS embed.FS

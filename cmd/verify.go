@@ -6,17 +6,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newVerifyCmd returns the `emailable verify` cobra command.
-//
-// `verify` is single-email real-time verification. For multiple emails or
-// file input (CSV / JSON / TXT), users should reach for
-// `emailable batch verify` instead — the two commands were split apart so
-// each could have a focused flag surface and clearer help text.
-//
-// Flags map 1:1 to the GET /v1/verify query parameters documented at
-// https://emailable.com/docs/api/emails/. Each is only forwarded when the
-// user explicitly set it (cobra's pflag.Changed), so omitted flags fall
-// through to whatever server-side default is current.
 func newVerifyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "verify EMAIL",
@@ -54,11 +43,6 @@ func newVerifyCmd() *cobra.Command {
 
 			f := newOutput(cmd.OutOrStdout(), jsonOutput)
 
-			// Real-time verification can take several seconds (SMTP probes,
-			// Accept-All checks). Run a spinner so the user sees motion
-			// instead of a frozen prompt. TTY-gated; suppressed in JSON
-			// mode so scripted output stays clean, and in quiet mode since
-			// the spinner counts as non-error human chrome.
 			var sp *ui.Spinner
 			if !jsonOutput && !ctx.Quiet {
 				sp = ui.NewTo(cmd.ErrOrStderr(), "Verifying "+email)
@@ -80,10 +64,8 @@ func newVerifyCmd() *cobra.Command {
 	return cmd
 }
 
-// verifyOptionsFromFlags assembles api.VerifyOptions from the cobra flag
-// set. Flags that the user didn't explicitly set are left nil/zero so the
-// server's default applies — the CLI never silently overrides a default
-// just because cobra has a fallback value for the flag type.
+// verifyOptionsFromFlags only populates opts for flags the user explicitly set,
+// so omitted flags fall through to server defaults rather than cobra's zero values.
 func verifyOptionsFromFlags(cmd *cobra.Command) (*api.VerifyOptions, error) {
 	opts := &api.VerifyOptions{}
 	any := false

@@ -13,36 +13,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// errNotAuthenticated is returned by requireAuth when the active env has no
-// stored access token. Rendered as a plain message — there's no API status
-// code to attach.
 var errNotAuthenticated = errors.New("not logged in. Run `emailable login` first")
 
-// invalidInputError carries a code=invalid_input classification through the
-// error chain so renderError/exitCode can route local validation failures
-// (bad email shape, missing file, malformed flag value, cobra positional-arg
-// errors) to the documented invalid_input/exit-4 path. The wrapped message
-// is rendered verbatim; no envelope is added.
 type invalidInputError struct{ msg string }
 
 func (e *invalidInputError) Error() string { return e.msg }
 
-// NewInvalidInput returns an error tagged as code=invalid_input. The CLI's
-// errorCode/exitCode plumbing maps this to "invalid_input" / exit 4 and the
-// JSON renderer emits the standard flat `{"code":"invalid_input","message":...}`
-// shape.
+// NewInvalidInput returns an error that marks user input as invalid.
 func NewInvalidInput(msg string) error {
 	return &invalidInputError{msg: msg}
 }
 
-// NewInvalidInputf is the fmt.Errorf-style sibling of NewInvalidInput.
+// NewInvalidInputf returns a formatted invalid-input error.
 func NewInvalidInputf(format string, args ...any) error {
 	return &invalidInputError{msg: fmt.Sprintf(format, args...)}
 }
 
-// wrapInvalidInputArgs adapts a cobra positional-args validator so its error
-// (e.g. "accepts 1 arg(s), received 0") flows through the invalid_input
-// classification instead of cobra's default exit-1 path.
 func wrapInvalidInputArgs(fn cobra.PositionalArgs) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if err := fn(cmd, args); err != nil {
@@ -52,8 +38,7 @@ func wrapInvalidInputArgs(fn cobra.PositionalArgs) cobra.PositionalArgs {
 	}
 }
 
-// Exit codes. Documented in the README so scripts and AI agents can branch
-// on the specific failure mode without parsing the error message.
+// Exit codes — documented in the README; scripts can branch without parsing error messages.
 const (
 	exitOK        = 0
 	exitGeneric   = 1
@@ -63,9 +48,6 @@ const (
 	exitNetwork   = 5 // network, server_error
 )
 
-// Stable error code values. Emitted as the top-level `code` field in JSON
-// error output. The CLI prefers an API-provided `code` when present in the
-// response body; otherwise these are derived from HTTP status / error type.
 const (
 	codeNotAuthenticated = "not_authenticated"
 	codeForbidden        = "forbidden"
@@ -78,10 +60,6 @@ const (
 	codeUnknown          = "unknown"
 )
 
-// errorCode returns the stable CLI error code for err. Pure function of the
-// error value — does not consult the API body. Used both to populate the
-// JSON output's `code` field (when the body didn't already carry one) and
-// to drive exit-code classification.
 func errorCode(err error) string {
 	if err == nil {
 		return ""
@@ -118,8 +96,6 @@ func errorCode(err error) string {
 	return codeUnknown
 }
 
-// exitCode maps an error to a documented process exit code. See the exit*
-// constants for the taxonomy.
 func exitCode(err error) int {
 	if err == nil {
 		return exitOK
@@ -138,10 +114,6 @@ func exitCode(err error) int {
 	}
 }
 
-// isNetworkError reports whether err is a network/transport failure rather
-// than an HTTP response. Matches *url.Error (DNS/dial/timeout), net.Error,
-// and *net.OpError. We deliberately don't match arbitrary errors — only
-// connection-shaped ones — so misclassification stays narrow.
 func isNetworkError(err error) bool {
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) {
@@ -222,9 +194,6 @@ func renderJSONError(w io.Writer, err error) {
 
 	var apiErr *api.Error
 	if errors.As(err, &apiErr) {
-		// API body is a JSON object: pass it through, merging rate_limit
-		// and code as sibling top-level fields. The API's own `code` (if
-		// present) wins so callers see the canonical server-side value.
 		if obj, ok := apiBodyAsObject(apiErr); ok {
 			if apiErr.RateLimit != nil {
 				obj["rate_limit"] = rateLimitMap(apiErr.RateLimit)
@@ -235,8 +204,6 @@ func renderJSONError(w io.Writer, err error) {
 			writeJSONLine(w, obj)
 			return
 		}
-		// Body wasn't a JSON object (HTML, empty, scalar, array): synthesize
-		// a flat object.
 		msg := apiErr.Message
 		if msg == "" {
 			msg = fmt.Sprintf("HTTP %d", apiErr.StatusCode)
@@ -252,17 +219,12 @@ func renderJSONError(w io.Writer, err error) {
 		writeJSONLine(w, payload)
 		return
 	}
-	// Non-API errors (network, config, validation): flat object with `message`
-	// and `code`. No status_code because there isn't one.
 	writeJSONLine(w, map[string]any{
 		"message": err.Error(),
 		"code":    code,
 	})
 }
 
-// apiBodyAsObject parses the API error body as a JSON object. Returns the
-// decoded map and true on success; false if the body is empty, not valid
-// JSON, or valid JSON but not an object (string, number, array, null).
 func apiBodyAsObject(e *api.Error) (map[string]any, bool) {
 	if len(e.Body) == 0 {
 		return nil, false
@@ -285,9 +247,6 @@ func rateLimitMap(rl *api.RateLimit) map[string]int {
 func writeJSONLine(w io.Writer, v any) {
 	b, err := json.Marshal(v)
 	if err != nil {
-		// Should never happen for the shapes we build, but fall back to the
-		// same flat shape used by every other error path so consumers see a
-		// consistent schema instead of an unexpected envelope.
 		fmt.Fprintf(w, `{"code":%q,"message":%q}`+"\n", codeUnknown, err.Error())
 		return
 	}

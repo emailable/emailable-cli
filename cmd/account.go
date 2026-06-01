@@ -5,7 +5,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newAccountCmd returns the `emailable account` command group.
 func newAccountCmd() *cobra.Command {
 	account := &cobra.Command{
 		Use:          "account",

@@ -1,9 +1,4 @@
-// Package oauth implements the OAuth 2.0 device authorization grant
-// (RFC 8628) client used by emailable-cli's login flow, talking to the
-// /oauth/* endpoints.
-//
-// The package is transport-only: it does not touch the config file or surface
-// UX.
+// Package oauth implements the OAuth 2.0 device authorization grant (RFC 8628) client.
 package oauth
 
 import (
@@ -17,20 +12,14 @@ import (
 	"time"
 )
 
-// grantTypeDeviceCode is the RFC 8628 grant_type value used when exchanging
-// a device_code for an access token.
 const grantTypeDeviceCode = "urn:ietf:params:oauth:grant-type:device_code"
 
-// minPollInterval is the floor for the device-code polling interval. RFC 8628
-// §3.2 says clients MUST default to 5 seconds when the server omits interval.
+// minPollInterval: RFC 8628 §3.2 requires defaulting to 5 s when server omits interval.
 const minPollInterval = 5 * time.Second
 
-// defaultRequestTimeout caps a single OAuth HTTP call. Per-request rather than
-// per-loop, since PollToken runs many requests over an authorization's
-// lifetime, but bounded so a stuck socket can't wedge the login flow.
+// defaultRequestTimeout is per-request (not per-loop) so a stuck socket can't wedge the login flow.
 const defaultRequestTimeout = 30 * time.Second
 
-// OAuth `error` field values the server may return from /oauth/token.
 const (
 	codeAuthorizationPending = "authorization_pending"
 	codeSlowDown             = "slow_down"
@@ -39,33 +28,26 @@ const (
 	codeInvalidGrant         = "invalid_grant"
 )
 
-// Exported sentinel errors so callers can detect specific failure modes via
-// errors.Is.
 var (
+	// ErrAccessDenied is returned when the user explicitly denies the authorization request.
 	ErrAccessDenied = errors.New("oauth: access denied")
+	// ErrExpiredToken is returned when the device code has expired before the user authorized.
 	ErrExpiredToken = errors.New("oauth: device code expired")
-	// ErrInvalidGrant signals the server rejected the refresh_token as no
-	// longer valid (rotated, revoked, or expired). Callers should treat this
-	// as "the user must log in again" rather than retry.
+	// ErrInvalidGrant is returned when the refresh token was rotated, revoked, or expired; caller must re-login.
 	ErrInvalidGrant = errors.New("oauth: invalid grant")
 )
 
-// Client talks to the Emailable OAuth endpoints.
+// Client performs OAuth 2.0 device authorization grant flows against appURL.
 type Client struct {
 	httpClient *http.Client
 	appURL     string
 	clientID   string
 
-	// wait is overridable by tests so polling loops don't actually wait.
-	// The default honors ctx so Ctrl+C during a long sleep returns
-	// immediately instead of blocking for the full interval.
+	// wait is overridable by tests; default is ctx-aware so Ctrl+C during a poll sleep returns immediately.
 	wait func(ctx context.Context, d time.Duration) error
 }
 
 // NewClient returns a Client that posts to appURL with the given clientID.
-// When httpClient is nil a private *http.Client is constructed with a
-// bounded per-request timeout; callers that need a different transport
-// (e.g. tests) should pass their own.
 func NewClient(appURL, clientID string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultRequestTimeout}
@@ -78,7 +60,6 @@ func NewClient(appURL, clientID string, httpClient *http.Client) *Client {
 	}
 }
 
-// defaultWait sleeps for d or returns ctx's error if ctx is cancelled first.
 func defaultWait(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
@@ -90,9 +71,6 @@ func defaultWait(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// oauthError is the parsed `{ "error": ..., "error_description": ... }`
-// body OAuth servers return on 4xx responses. Typed so callers can route on
-// Code via errors.As.
 type oauthError struct {
 	Code        string
 	Description string
@@ -105,7 +83,7 @@ func (e *oauthError) Error() string {
 	return e.Code
 }
 
-// DeviceCode is the response from POST /oauth/device/code.
+// DeviceCode holds the server response from the device authorization endpoint.
 type DeviceCode struct {
 	DeviceCode              string `json:"device_code"`
 	UserCode                string `json:"user_code"`
@@ -115,8 +93,7 @@ type DeviceCode struct {
 	Interval                int    `json:"interval"`
 }
 
-// Token is the response from POST /oauth/token. The same shape is returned
-// for both the device_code grant and refresh_token grant.
+// Token holds the access and refresh tokens returned by the token endpoint.
 type Token struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -126,8 +103,7 @@ type Token struct {
 	CreatedAt    int64  `json:"created_at"`
 }
 
-// RequestDeviceCode returns a code pair whose user_code the human enters at
-// verification_uri to authorize the CLI.
+// RequestDeviceCode requests a device code from the authorization server.
 func (c *Client) RequestDeviceCode(ctx context.Context) (*DeviceCode, error) {
 	form := url.Values{}
 	form.Set("client_id", c.clientID)
@@ -145,10 +121,7 @@ func (c *Client) RequestDeviceCode(ctx context.Context) (*DeviceCode, error) {
 	return &dc, nil
 }
 
-// PollToken exchanges a device_code for an access token. It loops until the
-// server returns a token, the user denies, the code expires, or another
-// non-pending error occurs. The polling interval starts at dc.Interval
-// seconds and grows when the server signals slow_down.
+// PollToken polls the token endpoint until the user authorizes, denies, or the code expires.
 func (c *Client) PollToken(ctx context.Context, dc *DeviceCode) (*Token, error) {
 	form := url.Values{}
 	form.Set("grant_type", grantTypeDeviceCode)
@@ -189,12 +162,7 @@ func (c *Client) PollToken(ctx context.Context, dc *DeviceCode) (*Token, error) 
 	}
 }
 
-// Refresh sends no client_secret because the CLI is a public OAuth client.
-//
-// On an invalid_grant response (refresh token rotated, revoked, or expired)
-// the returned error wraps ErrInvalidGrant so callers can detect a
-// permanently-dead refresh token via errors.Is and prompt re-login. Other
-// failures (network, 5xx, decode) propagate as-is.
+// Refresh sends no client_secret — the CLI is a public OAuth client.
 func (c *Client) Refresh(ctx context.Context, refreshToken string) (*Token, error) {
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
@@ -211,7 +179,7 @@ func (c *Client) Refresh(ctx context.Context, refreshToken string) (*Token, erro
 	return tok, nil
 }
 
-// Revoke invalidates accessToken via POST /oauth/revoke.
+// Revoke revokes the given access token at the authorization server.
 func (c *Client) Revoke(ctx context.Context, accessToken string) error {
 	form := url.Values{}
 	form.Set("token", accessToken)
@@ -225,8 +193,6 @@ func (c *Client) Revoke(ctx context.Context, accessToken string) error {
 	return nil
 }
 
-// tokenPost wraps formPost with Token decoding. Server errors arrive as a
-// wrapped *oauthError.
 func (c *Client) tokenPost(ctx context.Context, form url.Values) (*Token, error) {
 	resp, err := c.formPost(ctx, "/oauth/token", form, "token")
 	if err != nil {
@@ -241,11 +207,6 @@ func (c *Client) tokenPost(ctx context.Context, form url.Values) (*Token, error)
 	return &tok, nil
 }
 
-// formPost POSTs form to c.appURL+path as application/x-www-form-urlencoded.
-// On 2xx returns the response with body still open; the caller must close
-// it. On non-2xx closes the body internally and returns a parsed OAuth
-// error. The op string ("device code", "token", "revoke") is included in
-// the wrapped error message.
 func (c *Client) formPost(ctx context.Context, path string, form url.Values, op string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(
 		ctx,
@@ -269,8 +230,6 @@ func (c *Client) formPost(ctx context.Context, path string, form url.Values, op 
 	return resp, nil
 }
 
-// wrapSentinel keeps the sentinel detectable via errors.Is while attaching
-// the server's error_description for the human-readable message.
 func wrapSentinel(sentinel error, description string) error {
 	if description == "" {
 		return sentinel
@@ -278,9 +237,6 @@ func wrapSentinel(sentinel error, description string) error {
 	return fmt.Errorf("%w: %s", sentinel, description)
 }
 
-// parseOAuthError reads an OAuth-style error body from resp and returns it as
-// a typed *oauthError so the server's `error` / `error_description` fields
-// surface verbatim, without layering a package-specific prefix on top.
 func parseOAuthError(resp *http.Response, op string) error {
 	var body struct {
 		Error            string `json:"error"`

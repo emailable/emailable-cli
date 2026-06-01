@@ -1,8 +1,4 @@
-// Package config reads the emailable-cli non-secret config file, holding
-// backend routing and output preferences. It has two scopes — a global file
-// at $XDG_CONFIG_HOME/emailable/config.json and a project file at
-// <project>/.emailable/config.json — both user-managed (the CLI never writes
-// them) and sharing the same schema. Credentials live in internal/credentials.
+// Package config reads the non-secret config file (backend URLs, output format). The CLI never writes it.
 package config
 
 import (
@@ -16,8 +12,7 @@ import (
 
 const appDir = "emailable"
 
-// Config is the on-disk schema. All fields are optional. APIURL and OAuthURL
-// must be set together within a single file.
+// Config holds non-secret configuration (backend URLs and output format).
 type Config struct {
 	APIURL   string `json:"api_url,omitempty"`
 	OAuthURL string `json:"oauth_url,omitempty"`
@@ -27,11 +22,7 @@ type Config struct {
 	Output string `json:"output,omitempty"`
 }
 
-// DefaultPath returns the global config path: $XDG_CONFIG_HOME/emailable/config.json,
-// falling back to $HOME/.config/emailable/config.json.
-//
-// Unlike credentials, this path is not env-suffixed — its contents are what
-// determine the active env in the first place.
+// DefaultPath is not env-suffixed — its contents are what determine the active env in the first place.
 func DefaultPath() (string, error) {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
@@ -44,8 +35,7 @@ func DefaultPath() (string, error) {
 	return filepath.Join(base, appDir, "config.json"), nil
 }
 
-// Load returns an empty *Config when path doesn't exist or is zero bytes,
-// so a fresh install or a `touch`ed file falls through to defaults.
+// Load reads a Config from path, returning an empty Config if the file does not exist.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {

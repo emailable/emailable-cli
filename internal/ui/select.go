@@ -8,13 +8,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Choice is one selectable item. Hint renders dim and inline.
+// Choice is a selectable option with an optional dimmed hint.
 type Choice struct {
 	Label string
 	Hint  string
 }
 
-// Select returns idx, ok, err. ok is false on esc / ctrl-c.
+// Select prompts the user to pick one of choices; ok is false on esc/ctrl-c.
 func Select(in io.Reader, out io.Writer, prompt string, choices []Choice) (idx int, ok bool, err error) {
 	if len(choices) == 0 {
 		return 0, false, errors.New("ui.Select: no choices")

@@ -10,43 +10,28 @@ import (
 	"strings"
 )
 
-// emailShape is a deliberately loose "anything@anything.anything" check.
-// It's only used to distinguish literal-email args from misspelled file
-// paths / garbage at the CLI boundary — full deliverability validation is
-// the API's job.
+// emailShape is a loose check used only to distinguish literal-email args from
+// misspelled paths at the CLI boundary — real validation is the API's job.
 var emailShape = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
-// looksLikeEmail reports whether s plausibly resembles an email address.
 func looksLikeEmail(s string) bool {
 	return emailShape.MatchString(strings.TrimSpace(s))
 }
 
-// stdinSource returns the reader stdin lines should be read from when `-`
-// appears in the arg list, and whether stdin has data piped to it (i.e. is
-// not a TTY). Overridable in tests.
+// stdinSource is overridable in tests.
 var stdinSource = func() (io.Reader, bool) {
 	fi, err := os.Stdin.Stat()
 	if err != nil {
 		return os.Stdin, false
 	}
-	// A pipe or redirected file has ModeCharDevice unset. A TTY does not.
 	piped := (fi.Mode() & os.ModeCharDevice) == 0
 	return os.Stdin, piped
 }
 
-// collectEmails flattens a list of CLI inputs (literal emails or paths to
-// .csv/.json/.txt files) into a deduped slice in first-seen order. Each
-// non-path argument is treated as a single email — comma-separated lists
-// are intentionally NOT split (commas in quoted local parts are technically
-// valid per RFC 5321, and shell-natural CLI input is space-separated). For
-// pasted comma-separated lists, save them to a .csv file and pass that.
-//
-// The special argument `-` reads newline-delimited emails from stdin
-// (treated as plain-text format, like a .txt file). It may appear at most
-// once and requires stdin to be piped — passing `-` from an interactive
-// TTY is an error.
-//
-// Returns an error if no emails remain.
+// collectEmails flattens CLI inputs (literal emails or .csv/.json/.txt paths)
+// into a deduped slice. Comma-separated args are not split — shell input is
+// space-separated, and commas in quoted local-parts are RFC 5321 valid.
+// `-` reads newline-delimited emails from a piped stdin (once only).
 func collectEmails(inputs []string, field string) ([]string, error) {
 	var out []string
 	seen := make(map[string]struct{})
@@ -113,10 +98,6 @@ func collectEmails(inputs []string, field string) ([]string, error) {
 			}
 			continue
 		}
-		// Not an existing file — must be a literal email. Reject anything
-		// that doesn't match the basic email shape so typos like a missing
-		// extension or a misspelled path don't get silently submitted to
-		// the API as an "email".
 		if !looksLikeEmail(in) {
 			if looksLikeBatchInput(in) {
 				return nil, NewInvalidInputf("file not found: %s", in)
@@ -132,9 +113,6 @@ func collectEmails(inputs []string, field string) ([]string, error) {
 	return out, nil
 }
 
-// isPath returns true if the input looks like a path to an existing file:
-// has a recognised extension or contains a path separator, and the file
-// exists on disk.
 func isPath(s string) bool {
 	lower := strings.ToLower(s)
 	hasExt := strings.HasSuffix(lower, ".csv") ||
@@ -151,9 +129,6 @@ func isPath(s string) bool {
 	return !info.IsDir()
 }
 
-// looksLikeBatchInput returns true if the argument passed to `verify` looks
-// like a path that was intended for `batch verify`. Used to surface a
-// migration hint after the split of the overloaded `verify` command.
 func looksLikeBatchInput(s string) bool {
 	lower := strings.ToLower(s)
 	if strings.HasSuffix(lower, ".csv") ||
@@ -244,7 +219,6 @@ func extractJSONEmails(top any, field, path string) ([]string, error) {
 		if len(v) == 0 {
 			return nil, nil
 		}
-		// Array of strings?
 		if _, ok := v[0].(string); ok {
 			out := make([]string, 0, len(v))
 			for _, item := range v {
@@ -254,7 +228,6 @@ func extractJSONEmails(top any, field, path string) ([]string, error) {
 			}
 			return out, nil
 		}
-		// Array of objects → need field
 		if _, ok := v[0].(map[string]any); ok {
 			if field == "" {
 				return nil, NewInvalidInputf("array of objects in %s; specify --field <name>", path)
@@ -273,7 +246,6 @@ func extractJSONEmails(top any, field, path string) ([]string, error) {
 		}
 		return nil, NewInvalidInputf("unsupported json array element type in %s", path)
 	case map[string]any:
-		// Top-level object: find array-valued field(s).
 		if field != "" {
 			arr, ok := v[field].([]any)
 			if !ok {
@@ -314,10 +286,6 @@ func readTXT(path string) ([]string, error) {
 	return out, nil
 }
 
-// readTXTReader reads newline-delimited emails from r using the same
-// permissive rules as readTXT: lines are split on commas too, and the
-// downstream collectEmails add() trims whitespace and skips empties. Used
-// for both .txt files and stdin (`-`).
 func readTXTReader(r io.Reader) ([]string, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {

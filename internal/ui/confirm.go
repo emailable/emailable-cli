@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
-// Confirm returns true only on Yes; No / esc / ctrl-c collapse to false.
+// Confirm prompts for a yes/no answer, returning false if the user aborts.
 func Confirm(in io.Reader, out io.Writer, message string) (yes bool, err error) {
 	var v bool
 	field := huh.NewConfirm().
