@@ -112,7 +112,7 @@ func TestRequireAuth_APIKeyShortCircuits(t *testing.T) {
 	newTestEnv(t, http.NotFoundHandler())
 
 	c := newCmdCtxForTest(t, &credentials.Credentials{APIKey: "sk_xxx"})
-	client, err := c.requireAuth()
+	client, err := c.requireAuth(context.Background())
 	if err != nil {
 		t.Fatalf("requireAuth: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestRequireAuth_NoCredentials(t *testing.T) {
 	newTestEnv(t, http.NotFoundHandler())
 
 	c := newCmdCtxForTest(t, &credentials.Credentials{})
-	_, err := c.requireAuth()
+	_, err := c.requireAuth(context.Background())
 	if !errors.Is(err, errNotAuthenticated) {
 		t.Errorf("expected errNotAuthenticated, got %v", err)
 	}
@@ -141,7 +141,7 @@ func TestRequireAuth_OAuthFresh(t *testing.T) {
 		RefreshToken: "rt",
 		ExpiresAt:    time.Now().Add(1 * time.Hour),
 	})
-	client, err := c.requireAuth()
+	client, err := c.requireAuth(context.Background())
 	if err != nil {
 		t.Fatalf("requireAuth: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestRequireAuth_OAuthRefreshSucceeds(t *testing.T) {
 	var noticeBuf bytes.Buffer
 	c = c.withRefreshNotice(&noticeBuf)
 
-	client, err := c.requireAuth()
+	client, err := c.requireAuth(context.Background())
 	if err != nil {
 		t.Fatalf("requireAuth: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestRequireAuth_OAuthRefreshInvalidGrant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newCmdCtx: %v", err)
 	}
-	if _, err := c.requireAuth(); !errors.Is(err, errNotAuthenticated) {
+	if _, err := c.requireAuth(context.Background()); !errors.Is(err, errNotAuthenticated) {
 		t.Errorf("expected errNotAuthenticated, got %v", err)
 	}
 }

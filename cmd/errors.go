@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"time"
 
 	"github.com/emailable/emailable-cli/internal/api"
 	"github.com/spf13/cobra"
@@ -71,6 +72,7 @@ const (
 	codeNotFound         = "not_found"
 	codeInvalidInput     = "invalid_input"
 	codeRateLimited      = "rate_limited"
+	codeTryAgain         = "try_again"
 	codeServerError      = "server_error"
 	codeNetwork          = "network"
 	codeUnknown          = "unknown"
@@ -102,6 +104,8 @@ func errorCode(err error) string {
 			return codeNotFound
 		case apiErr.StatusCode == 429:
 			return codeRateLimited
+		case apiErr.StatusCode == 249:
+			return codeTryAgain
 		case apiErr.StatusCode == 400 || apiErr.StatusCode == 422:
 			return codeInvalidInput
 		case apiErr.StatusCode >= 500:
@@ -123,7 +127,7 @@ func exitCode(err error) int {
 	switch errorCode(err) {
 	case codeNotAuthenticated, codeForbidden:
 		return exitAuth
-	case codeRateLimited:
+	case codeRateLimited, codeTryAgain:
 		return exitRateLimit
 	case codeInvalidInput, codeNotFound:
 		return exitInput
@@ -166,8 +170,8 @@ func isNetworkError(err error) bool {
 // across paths so agents can parse a single schema.
 //
 // Human mode: prints `Error: <message> (HTTP <status>)` for *api.Error and
-// `Error: <message>` otherwise. On 429 with a known reset window we append
-// ` (retry in <Reset>s)` so the user knows when to retry.
+// `Error: <message>` otherwise. On 429 with a known reset timestamp we append a
+// retry hint so the user knows when to retry.
 func renderError(w io.Writer, err error, jsonMode bool) {
 	if err == nil {
 		return
@@ -186,14 +190,31 @@ func renderHumanError(w io.Writer, err error) {
 		if msg == "" {
 			msg = fmt.Sprintf("HTTP %d", apiErr.StatusCode)
 		}
+		if apiErr.StatusCode == 249 {
+			fmt.Fprintf(w, "Pending: %s\n", msg)
+			return
+		}
 		line := fmt.Sprintf("Error: %s (HTTP %d)", msg, apiErr.StatusCode)
-		if apiErr.StatusCode == 429 && apiErr.RateLimit != nil && apiErr.RateLimit.Reset > 0 {
-			line += fmt.Sprintf(" (retry in %ds)", apiErr.RateLimit.Reset)
+		if apiErr.StatusCode == 429 {
+			if resetAfter := rateLimitResetAfter(apiErr.RateLimit, time.Now()); resetAfter > 0 {
+				line += fmt.Sprintf(" (retry in %ds)", int(resetAfter.Round(time.Second)/time.Second))
+			}
 		}
 		fmt.Fprintln(w, line)
 		return
 	}
 	fmt.Fprintf(w, "Error: %s\n", err.Error())
+}
+
+func rateLimitResetAfter(rl *api.RateLimit, now time.Time) time.Duration {
+	if rl == nil || rl.Reset <= 0 {
+		return 0
+	}
+	resetAt := time.Unix(int64(rl.Reset), 0)
+	if !resetAt.After(now) {
+		return 0
+	}
+	return resetAt.Sub(now)
 }
 
 func renderJSONError(w io.Writer, err error) {

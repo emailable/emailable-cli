@@ -30,7 +30,7 @@ func newAccountCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := cctx.requireAuth()
+			client, err := cctx.requireAuth(cmd.Context())
 			if err != nil {
 				return err
 			}

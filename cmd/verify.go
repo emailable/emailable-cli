@@ -42,7 +42,7 @@ func newVerifyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := ctx.requireAuth()
+			client, err := ctx.requireAuth(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -61,7 +61,7 @@ func newVerifyCmd() *cobra.Command {
 			// the spinner counts as non-error human chrome.
 			var sp *ui.Spinner
 			if !jsonOutput && !ctx.Quiet {
-				sp = ui.New("Verifying " + email)
+				sp = ui.NewTo(cmd.ErrOrStderr(), "Verifying "+email)
 				sp.Start()
 			}
 			result, err := client.Verify(cmd.Context(), email, opts)

@@ -60,7 +60,7 @@ func newBatchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := cctx.requireAuth()
+			client, err := cctx.requireAuth(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -70,7 +70,7 @@ func newBatchCmd() *cobra.Command {
 					return fmt.Errorf("--wait and --partial can't be combined: --wait already polls until completion")
 				}
 				sw := newStreamerIfEnabled(cmd, stream)
-				s, err := waitForCompletion(cmd.Context(), client, id, jsonEff, sw)
+				s, err := waitForCompletion(cmd.Context(), client, id, jsonEff, sw, cmd.ErrOrStderr())
 				if err != nil {
 					return err
 				}
@@ -121,7 +121,7 @@ func newBatchCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := cctx.requireAuth()
+			client, err := cctx.requireAuth(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -157,7 +157,7 @@ func newBatchCmd() *cobra.Command {
 						return err
 					}
 				}
-				final, err := waitForCompletion(cmd.Context(), client, submit.ID, jsonEff || cctx.Quiet, sw)
+				final, err := waitForCompletion(cmd.Context(), client, submit.ID, jsonEff || cctx.Quiet, sw, cmd.ErrOrStderr())
 				if err != nil {
 					return err
 				}
@@ -340,8 +340,10 @@ const (
 //
 // Progress output goes to stderr so piping stdout (e.g. `verify --wait >
 // results.json`) doesn't mix the bar into the result payload.
-func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonMode bool, sw *batchStreamer) (*api.BatchStatus, error) {
-	progressOut := io.Writer(os.Stderr)
+func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonMode bool, sw *batchStreamer, progressOut io.Writer) (*api.BatchStatus, error) {
+	if progressOut == nil {
+		progressOut = os.Stderr
+	}
 	uiEnabled := !jsonMode && sw == nil
 
 	var (

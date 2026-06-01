@@ -195,6 +195,8 @@ const longDescription = "Command-line interface for Emailable's email verificati
 // The v argument lets tests inject a deterministic version string; production
 // callers pass the package-level `version` (set via ldflags).
 func newRootCmd(v string) *cobra.Command {
+	resetRootFlagState()
+
 	// Swap the package-level version so versionDisplay and the version
 	// subcommand's lazily-read RunE observe v. Intentionally not restored:
 	// tests rely on the swap persisting across Execute and don't run
@@ -291,6 +293,15 @@ func newRootCmd(v string) *cobra.Command {
 	})
 
 	return root
+}
+
+func resetRootFlagState() {
+	jsonOutput = false
+	jqExpr = ""
+	jqQuery = nil
+	apiKey = ""
+	debugMode = false
+	quietMode = false
 }
 
 // Execute runs the root command.

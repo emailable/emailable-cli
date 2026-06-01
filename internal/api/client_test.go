@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVerify_200(t *testing.T) {
@@ -84,10 +85,61 @@ func TestVerify_422(t *testing.T) {
 	}
 }
 
-// TestVerify_429_RateLimit asserts that the IETF-draft `RateLimit-*` headers
-// are captured into *Error.RateLimit on a 429 response so callers (the
-// renderer in cmd/errors.go) can surface a retry hint. Retries are disabled
-// here so the test doesn't actually sleep for the advertised window.
+func TestVerify_249_TryAgainIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(249)
+		_, _ = io.WriteString(w, `{"message":"Your request is taking longer than normal. Please send your request again."}`)
+	}))
+	defer srv.Close()
+
+	c := NewWithOptions(srv.URL, "tok", Options{MaxRetries: -1})
+	_, err := c.Verify(context.Background(), "slow@example.com", nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var apiErr *Error
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *Error, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != 249 {
+		t.Errorf("expected StatusCode 249, got %d", apiErr.StatusCode)
+	}
+}
+
+func TestVerify_Options(t *testing.T) {
+	var got url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"email":"foo@bar.com","state":"deliverable","score":100}`)
+	}))
+	defer srv.Close()
+
+	smtp := false
+	acceptAll := true
+	c := New(srv.URL, "tok", nil)
+	if _, err := c.Verify(context.Background(), "foo@bar.com", &VerifyOptions{
+		SMTP:      &smtp,
+		AcceptAll: &acceptAll,
+		Timeout:   8,
+	}); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	for key, want := range map[string]string{
+		"email":      "foo@bar.com",
+		"smtp":       "false",
+		"accept_all": "true",
+		"timeout":    "8",
+	} {
+		if got.Get(key) != want {
+			t.Errorf("%s: got %q want %q", key, got.Get(key), want)
+		}
+	}
+}
+
+// TestVerify_429_RateLimit asserts that the documented `RateLimit-*` headers
+// are captured into *Error.RateLimit on a 429 response so callers can surface a
+// retry hint. Retries are disabled here so the test doesn't actually sleep.
 func TestVerify_429_RateLimit(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("RateLimit-Limit", "1000")
@@ -180,9 +232,25 @@ func TestVerify_RateLimitHeaders_PartialAndMalformed(t *testing.T) {
 	}
 }
 
+func TestBackoffFor_UsesRateLimitResetTimestamp(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	got := backoffFor(&RateLimit{Reset: int(now.Add(10 * time.Second).Unix())}, 0, now)
+	if got < 10*time.Second || got > 11*time.Second {
+		t.Fatalf("expected backoff near reset timestamp, got %s", got)
+	}
+}
+
+func TestBackoffFor_StaleRateLimitResetFallsBack(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	got := backoffFor(&RateLimit{Reset: int(now.Add(-10 * time.Second).Unix())}, 0, now)
+	if got < time.Second || got > 2*time.Second {
+		t.Fatalf("expected exponential fallback for stale reset timestamp, got %s", got)
+	}
+}
+
 // TestVerify_429_RetriesUntilSuccess asserts the client retries a 429
-// automatically, honoring RateLimit-Reset for the backoff (clamped to the
-// floor so a 0-second reset still pauses briefly).
+// automatically, falling back to the minimum backoff when RateLimit-Reset is
+// absent or stale.
 func TestVerify_429_RetriesUntilSuccess(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -280,7 +348,12 @@ func TestSubmitBatch_POSTBody(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "tok", nil)
-	submit, err := c.SubmitBatch(context.Background(), []string{"a@x.com", "b@y.com"}, nil)
+	retries := false
+	submit, err := c.SubmitBatch(context.Background(), []string{"a@x.com", "b@y.com"}, &SubmitBatchOptions{
+		URL:            "https://hook.example/r",
+		Retries:        &retries,
+		ResponseFields: []string{"email", "state"},
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -296,5 +369,37 @@ func TestSubmitBatch_POSTBody(t *testing.T) {
 	}
 	if form.Get("emails") != "a@x.com,b@y.com" {
 		t.Errorf("unexpected emails: %s", form.Get("emails"))
+	}
+	for key, want := range map[string]string{
+		"url":             "https://hook.example/r",
+		"retries":         "false",
+		"response_fields": "email,state",
+	} {
+		if form.Get(key) != want {
+			t.Errorf("%s: got %q want %q", key, form.Get(key), want)
+		}
+	}
+}
+
+func TestBatch_PartialOption(t *testing.T) {
+	var got url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"bch_123","emails":[]}`)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok", nil)
+	if _, err := c.Batch(context.Background(), "bch_123", true); err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	for key, want := range map[string]string{
+		"id":      "bch_123",
+		"partial": "true",
+	} {
+		if got.Get(key) != want {
+			t.Errorf("%s: got %q want %q", key, got.Get(key), want)
+		}
 	}
 }

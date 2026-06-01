@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/emailable/emailable-cli/internal/api"
 )
@@ -27,19 +28,33 @@ func TestRenderError_Human_APIError(t *testing.T) {
 	}
 }
 
-// TestRenderError_Human_RateLimit429 appends the retry hint when the API
-// error is 429 with a known Reset window.
+// TestRenderError_Human_RateLimit429 appends the retry hint when the API error
+// is 429 with a future reset timestamp.
 func TestRenderError_Human_RateLimit429(t *testing.T) {
 	var buf bytes.Buffer
 	err := &api.Error{
 		StatusCode: 429,
 		Message:    "Too Many Requests",
 		Body:       []byte(`{"message":"Too Many Requests"}`),
-		RateLimit:  &api.RateLimit{Limit: 1000, Remaining: 0, Reset: 60},
+		RateLimit:  &api.RateLimit{Limit: 1000, Remaining: 0, Reset: int(time.Now().Add(60 * time.Second).Unix())},
 	}
 	renderError(&buf, err, false)
 	got := buf.String()
-	want := "Error: Too Many Requests (HTTP 429) (retry in 60s)\n"
+	if !strings.HasPrefix(got, "Error: Too Many Requests (HTTP 429) (retry in ") {
+		t.Errorf("expected retry hint, got %q", got)
+	}
+}
+
+func TestRenderError_Human_TryAgain249(t *testing.T) {
+	var buf bytes.Buffer
+	err := &api.Error{
+		StatusCode: 249,
+		Message:    "Your request is taking longer than normal. Please send your request again.",
+		Body:       []byte(`{"message":"Your request is taking longer than normal. Please send your request again."}`),
+	}
+	renderError(&buf, err, false)
+	got := buf.String()
+	want := "Pending: Your request is taking longer than normal. Please send your request again.\n"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -221,6 +236,23 @@ func TestRenderError_JSON_AddsCodeWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestRenderError_JSON_TryAgain249(t *testing.T) {
+	var buf bytes.Buffer
+	err := &api.Error{
+		StatusCode: 249,
+		Message:    "try again",
+		Body:       []byte(`{"message":"try again"}`),
+	}
+	renderError(&buf, err, true)
+	var decoded map[string]any
+	if jerr := json.Unmarshal(buf.Bytes(), &decoded); jerr != nil {
+		t.Fatalf("decode: %v", jerr)
+	}
+	if decoded["code"] != "try_again" {
+		t.Errorf("expected code=try_again, got %v", decoded["code"])
+	}
+}
+
 // TestRenderError_JSON_GenericHasCode confirms non-API errors still get a
 // `code` field so agents can branch on it.
 func TestRenderError_JSON_GenericHasCode(t *testing.T) {
@@ -249,6 +281,7 @@ func TestExitCode(t *testing.T) {
 		{"api_403", &api.Error{StatusCode: 403}, exitAuth},
 		{"api_404", &api.Error{StatusCode: 404}, exitInput},
 		{"api_422", &api.Error{StatusCode: 422}, exitInput},
+		{"api_249", &api.Error{StatusCode: 249}, exitRateLimit},
 		{"api_429", &api.Error{StatusCode: 429}, exitRateLimit},
 		{"api_500", &api.Error{StatusCode: 500}, exitNetwork},
 		{"generic", errors.New("boom"), exitGeneric},
