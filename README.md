@@ -1,5 +1,6 @@
-# Emailable CLI
+# <img src="assets/emailable-icon.svg" height="28" alt="Emailable"> Emailable CLI
 
+[![Latest Release](https://img.shields.io/github/v/release/emailable/emailable-cli?include_prereleases)](https://github.com/emailable/emailable-cli/releases)
 ![Build Status](https://github.com/emailable/emailable-cli/actions/workflows/ci.yml/badge.svg)
 
 This is the official CLI to work with [Emailable](https://emailable.com) from
