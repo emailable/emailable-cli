@@ -58,13 +58,42 @@ esac
 
 # --- resolve version --------------------------------------------------------
 
+# Resolve the latest version, validating against semver so a prerelease-only
+# repo (whose /releases/latest has no /tag/) fails here instead of 404ing on a
+# bogus download URL. Prereleases aren't auto-selected; set EMAILABLE_VERSION.
+latest_version() {
+  local url version json
+
+  # Prefer the redirect over the API to dodge unauthenticated rate limits.
+  if url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+             "https://github.com/${REPO}/releases/latest" 2>/dev/null); then
+    version="${url##*/}"
+    version="${version#v}"
+    if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+      printf '%s\n' "$version"
+      return 0
+    fi
+  fi
+
+  if json=$(curl -fsSL -H 'Accept: application/vnd.github+json' \
+              -H 'User-Agent: emailable-cli-installer' \
+              "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null); then
+    if [[ "$json" =~ \"tag_name\"[[:space:]]*:[[:space:]]*\"v?([^\"]+)\" ]]; then
+      version="${BASH_REMATCH[1]}"
+      if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+        printf '%s\n' "$version"
+        return 0
+      fi
+    fi
+  fi
+
+  return 1
+}
+
 version="${EMAILABLE_VERSION:-}"
 if [ -z "$version" ]; then
-  # Use the redirect target of /releases/latest rather than the API to avoid
-  # unauthenticated rate limits.
-  version=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
-    "https://github.com/${REPO}/releases/latest" | sed 's#.*/tag/##')
-  [ -n "$version" ] || abort "could not determine latest version"
+  version=$(latest_version) || \
+    abort "could not determine the latest version; set EMAILABLE_VERSION to install a specific release"
 fi
 version="${version#v}"
 tag="v${version}"
