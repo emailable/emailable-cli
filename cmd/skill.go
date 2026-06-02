@@ -49,7 +49,8 @@ func runSkillWizard(cmd *cobra.Command) error {
 	choices := make([]ui.Choice, 0, len(targets)+1)
 	for _, t := range targets {
 		choices = append(choices, ui.Choice{
-			Label: fmt.Sprintf("%s (%s)", t.Name, filepath.Join(t.Dir, skill.FileName)),
+			Label: t.Name,
+			Hint:  filepath.Join(t.Dir, skill.FileName),
 		})
 	}
 	choices = append(choices, ui.Choice{Label: "Other (custom path)"})
