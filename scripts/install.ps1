@@ -35,8 +35,13 @@ $arch = switch ($procArch) {
 
 # --- resolve version ------------------------------------------------------
 
-$version = $env:EMAILABLE_VERSION
-if (-not $version) {
+# Resolve the latest version, validating against semver so a prerelease-only
+# repo (whose /releases/latest has no /tag/) fails here instead of 404ing on a
+# bogus download URL. Prereleases aren't auto-selected; set $env:EMAILABLE_VERSION.
+$SemVer = '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+
+function Get-LatestVersion {
+  # Prefer the redirect over the API to dodge unauthenticated rate limits.
   try {
     $resp = Invoke-WebRequest -UseBasicParsing -MaximumRedirection 0 `
       -Uri "https://github.com/$Repo/releases/latest" -ErrorAction SilentlyContinue
@@ -45,8 +50,29 @@ if (-not $version) {
   }
   $location = $null
   if ($resp -and $resp.Headers) { $location = $resp.Headers['Location'] }
-  if (-not $location) { Abort "could not determine latest version" }
-  $version = ($location -split '/tag/')[-1]
+  if ($location) {
+    $v = (($location -split '/')[-1]).TrimStart('v')
+    if ($v -match $SemVer) { return $v }
+  }
+
+  # Fall back to the API if redirect parsing fails.
+  try {
+    $json = Invoke-RestMethod -UseBasicParsing `
+      -Headers @{ 'Accept' = 'application/vnd.github+json'; 'User-Agent' = 'emailable-cli-installer' } `
+      -Uri "https://api.github.com/repos/$Repo/releases/latest"
+    $v = ([string]$json.tag_name).TrimStart('v')
+    if ($v -match $SemVer) { return $v }
+  } catch {}
+
+  return $null
+}
+
+$version = $env:EMAILABLE_VERSION
+if (-not $version) {
+  $version = Get-LatestVersion
+  if (-not $version) {
+    Abort "could not determine the latest version; set `$env:EMAILABLE_VERSION to install a specific release"
+  }
 }
 $version = $version.TrimStart('v')
 $tag     = "v$version"
