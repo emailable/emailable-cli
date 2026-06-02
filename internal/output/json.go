@@ -8,15 +8,10 @@ import (
 	"github.com/emailable/emailable-cli/internal/ui"
 )
 
-// RawJSONProvider is implemented by API response types that retain the server
-// response. When a value carries raw bytes, machine output is built from those
-// instead of re-encoding the typed struct, so nullable fields and any field the
-// struct doesn't model are preserved — the contract the README advertises.
-//
-// This is a structural passthrough, not byte-for-byte: every key, value, null,
-// and field order is preserved, but insignificant whitespace is normalized to
-// the formatter's shape (see documentBytes) so output stays consistent and
-// colorizable regardless of how the API formatted the body.
+// RawJSONProvider is implemented by API response types that retain the raw
+// server body. Using it instead of re-encoding the typed struct preserves
+// nullable fields and unmodeled keys — the contract the README advertises.
+// Whitespace is normalized to the formatter's shape (compact vs. pretty).
 type RawJSONProvider interface {
 	RawJSON() []byte
 }
@@ -33,24 +28,20 @@ func rawBytes(v any) ([]byte, bool) {
 	return raw, true
 }
 
-// JSON renders a value as JSON — pretty by default, one line when Compact,
-// colorized on a TTY. A set Query (--jq) filters the value before printing.
+// JSON renders a value as JSON, optionally filtering with a jq query.
 type JSON struct {
 	W       io.Writer
 	Query   *Query
 	Compact bool
 }
 
-// FilterError distinguishes a --jq runtime error from an I/O error, so the
-// streaming path can skip an event whose filter errored instead of aborting.
+// FilterError distinguishes a --jq runtime error from an I/O error so the
+// streaming path can skip a failed event instead of aborting.
 type FilterError struct{ Err error }
 
 func (e *FilterError) Error() string { return e.Err.Error() }
 func (e *FilterError) Unwrap() error { return e.Err }
 
-// marshalDocument renders v's JSON document — the raw API body when present
-// (only whitespace reshaped, so unmodeled fields and nulls survive), else the
-// typed encoding. Shared by the formatter and file writes so they can't drift.
 func marshalDocument(v any, compact bool) ([]byte, error) {
 	if raw, ok := rawBytes(v); ok {
 		var buf bytes.Buffer
@@ -64,7 +55,7 @@ func marshalDocument(v any, compact bool) ([]byte, error) {
 			buf.WriteByte('\n')
 			return buf.Bytes(), nil
 		}
-		// Malformed raw: fall through to typed encoding below.
+		// Malformed raw bytes — fall through to typed encoding.
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -81,6 +72,7 @@ func (j *JSON) documentBytes(v any) ([]byte, error) {
 	return marshalDocument(v, j.Compact)
 }
 
+// Print writes v as JSON to j.W, applying j.Query if set.
 func (j *JSON) Print(v any) error {
 	if j.Query != nil {
 		return j.printFiltered(v)
@@ -96,8 +88,6 @@ func (j *JSON) Print(v any) error {
 	return err
 }
 
-// printFiltered writes each --jq result on its own line. Strings print raw
-// (unquoted, like `jq -r`); everything else as JSON.
 func (j *JSON) printFiltered(v any) error {
 	doc, err := j.documentBytes(v)
 	if err != nil {
@@ -137,8 +127,7 @@ func (j *JSON) printFiltered(v any) error {
 func (j *JSON) encodeResult(r any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
-	// HTML escaping off so URLs and angle brackets survive, the way jq emits them.
-	enc.SetEscapeHTML(false)
+	enc.SetEscapeHTML(false) // match jq: URLs and angle brackets pass through unescaped
 	if !j.Compact {
 		enc.SetIndent("", "  ")
 	}
@@ -148,10 +137,8 @@ func (j *JSON) encodeResult(r any) ([]byte, error) {
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
-// ANSI escape sequences for the JSON palette. Raw codes (not lipgloss): the
-// global lipgloss renderer probes process stdio at init and can drop a
-// TTY-detected writer to uncolored output, whereas raw codes are deterministic
-// and testable.
+// Raw ANSI codes rather than lipgloss: lipgloss probes process stdio at init
+// and can drop color for a TTY-detected writer; raw codes are deterministic.
 const (
 	jsonAnsiReset  = "\x1b[0m"
 	jsonAnsiKey    = "\x1b[1;36m" // bold cyan
@@ -161,15 +148,9 @@ const (
 	jsonAnsiNull   = "\x1b[2m"    // dim
 )
 
-// colorizeJSON wraps each JSON token in src with ANSI styling. src must be
-// well-formed JSON (the bytes coming out of encoding/json), so this is a
-// pragmatic scanner rather than a full parser: strings are extracted with
-// escape-aware bounds, numbers are walked greedily over [0-9.eE+-], and
-// `true`/`false`/`null` are matched as literals. Anything else (whitespace,
-// structural punctuation) is copied through unchanged.
-//
-// Key vs string disambiguation: after closing a string we peek past any
-// spaces/tabs; a following ':' means we just rendered an object key.
+// colorizeJSON applies ANSI color to well-formed JSON from encoding/json.
+// Key vs. value disambiguation: after closing a string, peek past spaces/tabs;
+// a ':' means the string was an object key.
 func colorizeJSON(src []byte) []byte {
 	out := bytes.NewBuffer(make([]byte, 0, len(src)*2))
 	for i := 0; i < len(src); {
@@ -178,8 +159,6 @@ func colorizeJSON(src []byte) []byte {
 		case c == '"':
 			end := scanString(src, i)
 			tok := src[i:end]
-			// A following ':' (past spaces/tabs only — no newlines appear
-			// between key and colon) means this string is an object key.
 			k := end
 			for k < len(src) && (src[k] == ' ' || src[k] == '\t') {
 				k++
@@ -211,24 +190,19 @@ func colorizeJSON(src []byte) []byte {
 	return out.Bytes()
 }
 
-// wrap writes prefix + tok + reset to out.
 func wrap(out *bytes.Buffer, prefix string, tok []byte) {
 	out.WriteString(prefix)
 	out.Write(tok)
 	out.WriteString(jsonAnsiReset)
 }
 
-// scanString returns the index one past the closing quote of the JSON
-// string starting at src[start] (which must be '"'). Backslash escapes are
-// skipped so an escaped quote (\") doesn't terminate the string early.
+// scanString returns the index one past the closing quote. Backslash escapes
+// skip two bytes so \" doesn't terminate early.
 func scanString(src []byte, start int) int {
 	i := start + 1
 	for i < len(src) {
 		switch src[i] {
 		case '\\':
-			// Skip the escape and the byte it escapes. For \uXXXX the four
-			// hex digits get walked as ordinary unescaped bytes in the next
-			// iteration — that's fine; none of them are '"' or '\\'.
 			i += 2
 		case '"':
 			return i + 1
@@ -239,10 +213,6 @@ func scanString(src []byte, start int) int {
 	return i
 }
 
-// scanNumber returns the index one past the last byte of the JSON number
-// starting at src[start]. The accepted character set is intentionally a
-// superset (it would match malformed numbers too), but encoding/json only
-// emits valid numbers, so over-acceptance is harmless here.
 func scanNumber(src []byte, start int) int {
 	i := start + 1
 	for i < len(src) {
@@ -256,7 +226,6 @@ func scanNumber(src []byte, start int) int {
 	return i
 }
 
-// hasLiteral reports whether src starting at i exactly matches lit.
 func hasLiteral(src []byte, i int, lit string) bool {
 	if i+len(lit) > len(src) {
 		return false

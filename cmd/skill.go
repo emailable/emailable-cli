@@ -15,8 +15,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newSkillCmd is the `emailable skill` command group. Bare invocation
-// on a TTY launches a picker; otherwise it shows help.
 func newSkillCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skill",

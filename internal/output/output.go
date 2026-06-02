@@ -1,8 +1,5 @@
-// Package output handles terminal output formatting. Two formats are
-// supported: JSON (machine-readable) and Human (TTY-colored, table-style).
-//
-// Callers pick the format from the persistent --json flag and call Print on
-// the resulting Formatter.
+// Package output handles terminal output formatting (Human TTY-colored tables
+// and machine-readable JSON), selected via the persistent --json flag.
 package output
 
 import "io"
@@ -12,7 +9,7 @@ type Formatter interface {
 	Print(v any) error
 }
 
-// New returns a JSON formatter when jsonMode is true, otherwise a Human one.
+// New returns a JSON formatter when jsonMode is true, otherwise a Human formatter.
 func New(w io.Writer, jsonMode bool) Formatter {
 	if jsonMode {
 		return &JSON{W: w}

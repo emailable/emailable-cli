@@ -10,11 +10,6 @@ import (
 	"github.com/spf13/cobra/doc"
 )
 
-// newManCmd returns the hidden `emailable man` command. It generates a
-// man(1) page for the root command and one for each subcommand into the
-// target directory, suitable for installation under /usr/local/share/man
-// or for bundling in a release tarball. Hidden from --help because it's a
-// release/packaging tool rather than something a user runs interactively.
 func newManCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "man --output DIR",
@@ -33,7 +28,6 @@ func newManCmd() *cobra.Command {
 			if err := os.MkdirAll(abs, 0o755); err != nil {
 				return fmt.Errorf("create output dir: %w", err)
 			}
-			// Walk from the root command so every subcommand gets a page.
 			header := &doc.GenManHeader{
 				Title:   "EMAILABLE",
 				Section: "1",

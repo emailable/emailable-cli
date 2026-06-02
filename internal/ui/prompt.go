@@ -8,13 +8,12 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
-// Prompt returns value, ok, err. ok is false on esc / ctrl-c. mask
-// echoes bullets for secrets.
+// Prompt returns value, ok, err; ok is false on esc/ctrl-c.
 func Prompt(in io.Reader, out io.Writer, label string, mask bool) (value string, ok bool, err error) {
 	return PromptWithPlaceholder(in, out, label, "", mask)
 }
 
-// PromptWithPlaceholder is Prompt with a placeholder hint.
+// PromptWithPlaceholder is Prompt with a placeholder shown in the empty input.
 func PromptWithPlaceholder(in io.Reader, out io.Writer, label, placeholder string, mask bool) (value string, ok bool, err error) {
 	var v string
 	field := huh.NewInput().

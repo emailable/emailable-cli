@@ -13,16 +13,12 @@ import (
 
 // SaveOptions controls how WriteResults serializes data to disk.
 type SaveOptions struct {
-	// Path is the destination file path; required.
-	Path string
-	// ForceJSON forces JSON output regardless of file extension.
+	Path      string
 	ForceJSON bool
-	// Stderr receives non-fatal notes. nil means os.Stderr.
-	Stderr *os.File
+	Stderr    *os.File // nil means os.Stderr
 }
 
-// csvHeader is the canonical CSV column order. Floats (like Duration) are
-// intentionally omitted — not useful in a spreadsheet.
+// Duration and other floats are omitted — not useful in a spreadsheet.
 var csvHeader = []string{
 	"email", "state", "score", "reason", "domain",
 	"disposable", "accept_all", "role", "free",
@@ -30,12 +26,8 @@ var csvHeader = []string{
 	"first_name", "last_name", "gender",
 }
 
-// WriteResults writes v to opts.Path atomically (via .tmp + rename) and
-// returns the number of result rows written.
-//
-// Format selection: ForceJSON or a .json extension yields JSON; .csv yields
-// CSV when v is flattenable and JSON otherwise; any other extension yields
-// JSON. Non-JSON fallbacks emit a stderr note. Files are mode 0644.
+// WriteResults writes v to opts.Path atomically and returns the row count.
+// Unknown extensions fall back to JSON with a stderr note.
 func WriteResults(v any, opts SaveOptions) (int, error) {
 	if opts.Path == "" {
 		return 0, fmt.Errorf("output path is required")
@@ -56,7 +48,6 @@ func WriteResults(v any, opts SaveOptions) (int, error) {
 	case ext == ".json":
 		useCSV = false
 	default:
-		// Unknown extension: warn and write JSON.
 		fmt.Fprintln(stderr, "note: unrecognized extension; writing JSON")
 		useCSV = false
 	}
@@ -72,8 +63,6 @@ func WriteResults(v any, opts SaveOptions) (int, error) {
 	return writeJSON(v, opts.Path)
 }
 
-// flattenForCSV returns the rows extractable from v and whether v is a
-// CSV-renderable shape at all.
 func flattenForCSV(v any) ([]api.VerifyResult, bool) {
 	switch t := v.(type) {
 	case *api.VerifyResult:
@@ -97,8 +86,6 @@ func flattenForCSV(v any) ([]api.VerifyResult, bool) {
 	}
 }
 
-// resultCount returns the row count for the JSON path so callers can print
-// "Saved N results" consistently regardless of format.
 func resultCount(v any) int {
 	switch t := v.(type) {
 	case *api.VerifyResult:
@@ -118,8 +105,6 @@ func resultCount(v any) int {
 	case []api.VerifyResult:
 		return len(t)
 	default:
-		// No row count for unknown shapes; callers reword their success
-		// message ("Saved to <file>") accordingly.
 		return 0
 	}
 }
@@ -141,8 +126,6 @@ func writeCSV(rows []api.VerifyResult, path string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("create %s: %w", tmp, err)
 	}
-	// Best-effort cleanup of the tmp file if anything below fails before
-	// rename.
 	cleanup := true
 	defer func() {
 		if cleanup {
@@ -193,8 +176,6 @@ func writeCSV(rows []api.VerifyResult, path string) (int, error) {
 	return len(rows), nil
 }
 
-// atomicWrite writes data to path via path+".tmp" and renames into place.
-// The tmp file is removed if rename fails. Mode is 0644.
 func atomicWrite(path string, data []byte) error {
 	tmp := path + ".tmp"
 	cleanup := true

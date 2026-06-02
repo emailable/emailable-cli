@@ -1,18 +1,5 @@
-// Package env resolves the active runtime configuration: backend URLs and
-// output format defaults.
-//
-// These live in a config.Config layered across three sources, in descending
-// precedence:
-//
-//   - Environment variables (EMAILABLE_API_URL, EMAILABLE_OAUTH_URL,
-//     EMAILABLE_OUTPUT).
-//   - Project file at <project>/.emailable/config.json, discovered by
-//     walking up from the current working directory.
-//   - Global file at $XDG_CONFIG_HOME/emailable/config.json.
-//
-// All three use the same config.Config schema. Within a single source the
-// API/OAuth URLs must be set together. Per-field, higher-precedence sources
-// override lower-precedence ones.
+// Package env resolves the active runtime configuration (backend URLs, output format) from env vars,
+// project file, and global file in descending precedence.
 package env
 
 import (
@@ -24,12 +11,12 @@ import (
 )
 
 const (
-	// PublicClientID is the OAuth client_id for the Emailable CLI. Public by
-	// OAuth spec for a "public client" — embedded in every distributed binary
-	// and registered with the same value on every Emailable environment.
+	// PublicClientID is embedded in every binary; public by OAuth spec for a native/CLI client.
 	PublicClientID = "wdjuYuA3NZsKi-cR4mbaiBZ031iGt_a6zOpPQKzDFSI"
 
-	DefaultAPIBaseURL   = "https://api.emailable.com/v1"
+	// DefaultAPIBaseURL is the production Emailable API base URL.
+	DefaultAPIBaseURL = "https://api.emailable.com/v1"
+	// DefaultOAuthBaseURL is the production Emailable OAuth base URL.
 	DefaultOAuthBaseURL = "https://app.emailable.com"
 
 	envAPIURL         = "EMAILABLE_API_URL"
@@ -38,22 +25,16 @@ const (
 	envOptOutNotifier = "EMAILABLE_NO_UPDATE_NOTIFIER"
 )
 
-// Environment holds the active host configuration.
+// Environment holds the resolved runtime configuration for a single backend.
 type Environment struct {
-	// Name is "default" for production endpoints, "custom" when overridden via
-	// env vars, project file, or global file. Used to suffix the credentials
-	// file so tokens for different backends don't collide.
+	// Name suffixes the credentials file; "custom" when any URL is overridden so tokens don't collide.
 	Name         string
 	APIBaseURL   string
 	OAuthBaseURL string
 	ClientID     string
 }
 
-// MergedConfig returns the config that results from layering, per field:
-// env vars (highest) > project file > global file > zero value (lowest).
-//
-// Within a single source, the api_url/oauth_url pair must be both-set or
-// both-empty — partial sources are a configuration error.
+// MergedConfig returns the configuration merged from the global file, project file, and environment variables.
 func MergedConfig() (*config.Config, error) {
 	merged := &config.Config{}
 
@@ -93,7 +74,6 @@ func MergedConfig() (*config.Config, error) {
 	return merged, nil
 }
 
-// applyOver overlays src onto dst — non-zero fields in src win.
 func applyOver(dst, src *config.Config) {
 	if src.APIURL != "" {
 		dst.APIURL = src.APIURL
@@ -106,7 +86,7 @@ func applyOver(dst, src *config.Config) {
 	}
 }
 
-// Current resolves the active environment from the merged config.
+// Current returns the active Environment resolved from config files and environment variables.
 func Current() (*Environment, error) {
 	merged, err := MergedConfig()
 	if err != nil {
@@ -128,15 +108,11 @@ func Current() (*Environment, error) {
 	}, nil
 }
 
-// UpdateNotifierOptOut reports whether EMAILABLE_NO_UPDATE_NOTIFIER is set
-// to a truthy value. Exposed separately from MergedConfig so callers can
-// honor the env var even when config-file parsing fails — a corrupt config
-// must not override the user's explicit opt-out.
+// UpdateNotifierOptOut is separate from MergedConfig so a corrupt config file can't override an explicit opt-out.
 func UpdateNotifierOptOut() bool {
 	return isTruthy(os.Getenv(envOptOutNotifier))
 }
 
-// isTruthy returns true for "1", "true", "yes", "on" (case-insensitive).
 func isTruthy(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "1", "true", "yes", "on":

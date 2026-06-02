@@ -10,28 +10,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Animation cadence. Cells are revealed over several frames, then the name
-// types in letter by letter; the whole sequence runs in well under 1.5s.
 const (
 	brandSweepInterval = 22 * time.Millisecond
 	brandTextInterval  = 45 * time.Millisecond
 	brandRevealFrames  = 28 // target frames for the reveal phase
 )
 
-// cell is a position in the brand grid.
 type cell struct{ row, col int }
 
-// AnimateBrand paints the Emailable mark onto w by tracing its swirl like a
-// pen, then reveals the "Emailable" wordmark beside it. It blocks until the
-// animation finishes, leaving the fully-rendered mark on screen. When w isn't a
-// color TTY (piped output or NO_COLOR) it renders once, statically and
-// uncolored.
-//
-// Rendering is incremental to avoid flicker: it lays down an empty block, then
-// each frame paints only the cells revealed that frame, in place. Already-lit
-// cells are never repainted — repainting stable cells (and the cursor snapping
-// to column 0) every frame is what flickers. The cursor is hidden for the same
-// reason. Nothing else must write to w until it returns.
+// AnimateBrand traces the brand mark onto w cell-by-cell, then types the
+// wordmark. Blocks until done; nothing else must write to w until it returns.
 func AnimateBrand(w io.Writer) {
 	if !IsTTY(w) {
 		renderBrandStatic(w)
@@ -52,14 +40,12 @@ func AnimateBrand(w io.Writer) {
 	fmt.Fprint(w, "\033[?25l") // hide the cursor for the duration
 	defer fmt.Fprint(w, "\033[?25h")
 
-	// Lay down an empty, cleared block for paintCells to cursor-up over (so no
-	// stale terminal text shows through the mark's blank cells). The \r before
-	// each clear guarantees a full-line wipe even if the cursor wasn't at col 0.
+	// \r before each clear guarantees a full-line wipe even if the cursor
+	// wasn't at col 0.
 	for r := 0; r < g.rows; r++ {
 		fmt.Fprint(w, "\r\033[K\n")
 	}
 
-	// Reveal one batch of cells per frame, painting only that batch.
 	for f := 0; f < numBatches; f++ {
 		items := map[int][]glyphAt{}
 		for _, c := range order[f*batch : min((f+1)*batch, len(order))] {
@@ -75,7 +61,6 @@ func AnimateBrand(w io.Writer) {
 		time.Sleep(brandSweepInterval)
 	}
 
-	// Reveal the wordmark one letter at a time, beside the middle row.
 	nameCol := len(g.colors[brandNameLine]) + 3
 	for i := 0; i < len(brandName); i++ {
 		paintCells(w, g.rows, map[int][]glyphAt{
@@ -85,18 +70,14 @@ func AnimateBrand(w io.Writer) {
 	}
 }
 
-// glyphAt is a single styled glyph to paint at a column within a row.
 type glyphAt struct {
 	col int
 	s   string
 }
 
-// paintCells moves to the top of the rows-tall block, paints each given glyph
-// at its (row, col) in place — touching nothing else — and returns the cursor
-// just below the block. items[r] must be sorted by col. Painting only changed
-// cells (rather than repainting whole lines) is what keeps stable cells from
-// flickering. Each \n is followed by \r so column 0 is reached regardless of
-// the terminal's newline translation.
+// paintCells paints only the given cells in place (cursor-up, then per-cell
+// positioning). Repainting whole lines would flicker stable cells.
+// items[r] must be sorted by col.
 func paintCells(w io.Writer, rows int, items map[int][]glyphAt) {
 	fmt.Fprintf(w, "\033[%dA", rows) // up to the first row of the block
 	for r := 0; r < rows; r++ {
@@ -116,15 +97,12 @@ func paintCells(w io.Writer, rows int, items map[int][]glyphAt) {
 	fmt.Fprint(w, "\n\r") // step below the block, back to column 0
 }
 
-// The stroke is traced as two hand-authored polylines of (col, row) waypoints
-// in grid space (cols 0–35, rows 0–15): the outer ring, then the inner swirl.
-// Splitting them lets us match each cell to its own band's path (see
-// traceOrder), so a swirl cell can't be grabbed by a nearby ring segment.
+// Two hand-authored polylines in grid space (cols 0–35, rows 0–15). Splitting
+// ring and swirl lets each cell match only its own band; without the split,
+// nearby swirl cells would be grabbed by ring segments.
 var (
-	// brandRingPath traces the outer ring clockwise: bottom-center, up the
-	// left, over the top, down the right, to the ring's open lower-right.
 	brandRingPath = []point{
-		{16, 15}, // start: bottom-center
+		{16, 15},
 		{10, 14},
 		{5, 13},
 		{2, 9},
@@ -136,15 +114,12 @@ var (
 		{27, 2},
 		{32, 5},
 		{34, 8},
-		{32, 10}, // ring's open lower-right end
+		{32, 10},
 	}
-	// brandSwirlPath traces the inner swirl: in at the lower-right tail, then
-	// counterclockwise around and in. It ends at the bottom-right inner, not the
-	// hollow center — a center endpoint pulls the center-top cells past it so
-	// they light last. Early waypoints stay in the teal band (col ≥ 26) so they
-	// don't grab inner cells.
+	// Ends at the bottom-right inner rather than the hollow center — a center
+	// endpoint pulls center-top cells past it so they light last.
 	brandSwirlPath = []point{
-		{32, 11}, // start: tail tip, entering from the ring
+		{32, 11},
 		{29, 11},
 		{26, 10},
 		{25, 8},
@@ -155,28 +130,18 @@ var (
 		{10, 8},
 		{11, 11},
 		{15, 12},
-		{20, 11}, // bottom-right inner end
+		{20, 11},
 	}
 )
 
-// point is a waypoint on a brand stroke polyline, in grid coordinates.
 type point struct{ col, row float64 }
 
-// pathSamplesPerSeg is how finely each polyline segment is sampled when
-// matching cells to their nearest point on the stroke.
 const pathSamplesPerSeg = 24
 
-// brandRowAspect weights the row axis when measuring distances: braille cells
-// are about twice as tall as wide on screen, so without it the nearest-point
+// Braille cells are ~2× taller than wide; without this the nearest-point
 // match would be skewed vertically.
 const brandRowAspect = 2.0
 
-// traceOrder reveals cells by tracing the stroke like a pen. Ring cells (the
-// pink/purple/orange/yellow band) are matched to brandRingPath and swirl cells
-// (teal) to brandSwirlPath; within each, a cell takes the arc-length position
-// of its nearest point on that path. The ring is revealed first, then the
-// swirl — so each frame lights only the few cells the pen tip is passing, and
-// the two bands never bleed into each other's phase.
 func traceOrder(g brandGrid) []cell {
 	ring := samplePath(brandRingPath)
 	swirl := samplePath(brandSwirlPath)
@@ -217,12 +182,8 @@ func traceOrder(g brandGrid) []cell {
 	return out
 }
 
-// isSwirlColor reports whether a color letter belongs to the inner swirl (the
-// teal band) rather than the outer ring.
 func isSwirlColor(c byte) bool { return c == 'T' || c == 'L' }
 
-// samplePath returns evenly-spaced points along the polyline, with the row axis
-// scaled by brandRowAspect so distances match what the eye sees.
 func samplePath(path []point) [][2]float64 {
 	var pts [][2]float64
 	for seg := 0; seg+1 < len(path); seg++ {
@@ -237,7 +198,6 @@ func samplePath(path []point) [][2]float64 {
 	return pts
 }
 
-// nearestSample returns the index of the path sample closest to (x, y).
 func nearestSample(pts [][2]float64, x, y float64) int {
 	best, bestD := 0, math.MaxFloat64
 	for i, p := range pts {

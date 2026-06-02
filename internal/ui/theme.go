@@ -8,8 +8,7 @@ import (
 
 var dimColor = lipgloss.Color("241")
 
-// EmailableTheme overrides huh.ThemeBase with brand colors and our
-// "❯ " select cursor.
+// EmailableTheme returns the huh form theme using the Emailable brand colors.
 func EmailableTheme() *huh.Theme {
 	t := huh.ThemeBase()
 
@@ -59,7 +58,7 @@ func EmailableTheme() *huh.Theme {
 	return t
 }
 
-// EscKeyMap adds esc to huh's default ctrl+c quit binding.
+// EscKeyMap returns a huh key map that quits on esc or ctrl+c.
 func EscKeyMap() *huh.KeyMap {
 	km := huh.NewDefaultKeyMap()
 	km.Quit = key.NewBinding(key.WithKeys("esc", "ctrl+c"))

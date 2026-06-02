@@ -1,5 +1,4 @@
-// Package ui holds shared terminal-UI primitives (spinner, progress bar) so
-// every animated wait in the CLI uses the same cadence and styling.
+// Package ui holds shared terminal-UI primitives for animated CLI output.
 package ui
 
 import (
@@ -13,25 +12,19 @@ import (
 	"golang.org/x/term"
 )
 
-// noColorEnv is the env var name from https://no-color.org/. Any non-empty
-// value suppresses ANSI styling even on a real TTY.
+// noColorEnv — see https://no-color.org/
 const noColorEnv = "NO_COLOR"
 
-// SpinnerStyle is the shared style for the spinner glyph so it reads the same
-// everywhere; changing the color here changes every spinner at once.
+// SpinnerStyle is the shared style for the spinner glyph.
 var SpinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
 
-// Frames is the Braille spinner used for every animated wait in the CLI.
+// Frames are the spinner's animation frames.
 var Frames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
-// TickInterval is the redraw cadence (~10 fps).
+// TickInterval is the spinner's redraw cadence.
 const TickInterval = 100 * time.Millisecond
 
-// IsTTY reports whether w writes to a terminal AND color/animation should be
-// enabled, gating ANSI output so pipes don't fill with control codes.
-//
-// Honors the NO_COLOR convention (https://no-color.org/): a non-empty NO_COLOR
-// env var returns false even on a real terminal.
+// IsTTY reports whether ANSI output is appropriate for w (real TTY + NO_COLOR not set).
 func IsTTY(w io.Writer) bool {
 	if os.Getenv(noColorEnv) != "" {
 		return false
@@ -39,8 +32,7 @@ func IsTTY(w io.Writer) bool {
 	return isTerminal(w)
 }
 
-// isTerminal is the pure file-descriptor check. A var so tests can swap in a
-// fake TTY.
+// isTerminal is a var so tests can swap in a fake TTY.
 var isTerminal = func(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	if !ok {
@@ -49,15 +41,11 @@ var isTerminal = func(w io.Writer) bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
-// IsTerminal reports whether w is a terminal, ignoring NO_COLOR. Use it for
-// interactivity decisions; IsTTY (which honors NO_COLOR) is for styling.
+// IsTerminal checks the fd only, ignoring NO_COLOR. Use for interactivity; use IsTTY for styling.
 func IsTerminal(w io.Writer) bool {
 	return isTerminal(w)
 }
 
-// terminalWidth returns the column count of the terminal w is writing to,
-// or 0 if w isn't a TTY or the size can't be determined. Re-measured on
-// every frame so the progress bar tracks terminal resizes.
 func terminalWidth(w io.Writer) int {
 	f, ok := w.(*os.File)
 	if !ok {
@@ -70,11 +58,10 @@ func terminalWidth(w io.Writer) int {
 	return cols
 }
 
-// Spinner is a single-line animated status indicator. It writes to stderr by
-// default and degrades to a single status print when stderr is not a TTY.
+// Spinner is a single-line animated status indicator; degrades to a single print on non-TTY.
 type Spinner struct {
 	w   io.Writer
-	noP bool // true => not a TTY; suppress animation, fall back to a single print
+	noP bool
 
 	mu  sync.Mutex
 	msg string
@@ -85,12 +72,12 @@ type Spinner struct {
 	stopOnce sync.Once
 }
 
-// New returns a Spinner that writes to stderr with the given initial message.
+// New returns a Spinner that writes to stderr.
 func New(message string) *Spinner {
 	return NewTo(os.Stderr, message)
 }
 
-// NewTo returns a Spinner that writes to w. Used by tests that want a buffer.
+// NewTo returns a Spinner that writes to w.
 func NewTo(w io.Writer, message string) *Spinner {
 	s := &Spinner{
 		w:    w,
@@ -101,16 +88,14 @@ func NewTo(w io.Writer, message string) *Spinner {
 	return s
 }
 
-// SetMessage updates the message rendered next to the spinner. Safe from any
-// goroutine.
+// SetMessage updates the message shown next to the spinner.
 func (s *Spinner) SetMessage(msg string) {
 	s.mu.Lock()
 	s.msg = msg
 	s.mu.Unlock()
 }
 
-// Start begins the animation. When the writer is not a TTY, prints the
-// message once and returns; Stop is then a no-op.
+// Start begins the spinner animation.
 func (s *Spinner) Start() {
 	s.mu.Lock()
 	if s.started {
@@ -138,8 +123,7 @@ func (s *Spinner) Start() {
 				s.mu.Lock()
 				m := s.msg
 				s.mu.Unlock()
-				// \r + \033[K clears the line so a shorter message doesn't
-				// leave stale characters from a longer previous one.
+				// \r\033[K clears the line so a shorter message doesn't leave stale characters.
 				glyph := SpinnerStyle.Render(string(Frames[i%len(Frames)]))
 				fmt.Fprintf(s.w, "\r\033[K%s %s", glyph, m)
 				i++
@@ -150,7 +134,7 @@ func (s *Spinner) Start() {
 	}()
 }
 
-// Stop ends the animation and clears the spinner line. Idempotent.
+// Stop ends the animation and clears the spinner line.
 func (s *Spinner) Stop() {
 	s.mu.Lock()
 	started := s.started

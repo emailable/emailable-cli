@@ -1,5 +1,4 @@
-// Package api is the HTTP client for the Emailable v1 REST API. All requests
-// carry `Authorization: Bearer <accessToken>`.
+// Package api is the HTTP client for the Emailable v1 REST API.
 package api
 
 import (
@@ -17,14 +16,9 @@ import (
 	"time"
 )
 
-// defaultRequestTimeout caps the total wall time for a single API call.
-// Generous because a real-time verify can spend ~30s SMTP-probing slow MX
-// hosts, but bounded so a hung connection can't wedge the CLI forever.
+// defaultRequestTimeout is generous because real-time verify can spend ~30s SMTP-probing slow MX hosts.
 const defaultRequestTimeout = 60 * time.Second
 
-// Retry knobs for transient API responses. maxRetrySleep caps the per-attempt
-// wait so a misbehaving server can't wedge us for hours; minRetrySleep ensures a
-// brief pause even when the server returned an unparseable / zero Reset.
 const (
 	defaultMaxRetries = 2
 	maxRetrySleep     = 60 * time.Second
@@ -33,17 +27,10 @@ const (
 
 // Options tunes a Client. All fields are optional.
 type Options struct {
-	// HTTPClient is the underlying transport. nil => a private client with a
-	// bounded per-request timeout is built.
-	HTTPClient *http.Client
-	// Debug, when true, dumps each request and response to DebugOut with
-	// the Authorization header redacted.
-	Debug bool
-	// DebugOut is where debug output is written. nil => os.Stderr.
-	DebugOut io.Writer
-	// MaxRetries caps the number of 429 retries. 0 => defaultMaxRetries.
-	// Negative values disable retry entirely.
-	MaxRetries int
+	HTTPClient *http.Client // nil => private client with defaultRequestTimeout
+	Debug      bool
+	DebugOut   io.Writer // nil => os.Stderr
+	MaxRetries int       // 0 => defaultMaxRetries; negative => disable retry
 }
 
 // Client talks to the Emailable v1 API.
@@ -56,14 +43,12 @@ type Client struct {
 	maxRetries  int
 }
 
-// New returns a Client. When httpClient is nil a private *http.Client is
-// constructed with a bounded per-request timeout; callers that need a
-// different transport should pass their own.
+// New returns a Client for baseURL authenticated with accessToken.
 func New(baseURL, accessToken string, httpClient *http.Client) *Client {
 	return NewWithOptions(baseURL, accessToken, Options{HTTPClient: httpClient})
 }
 
-// NewWithOptions returns a Client configured per opts.
+// NewWithOptions returns a Client for baseURL authenticated with accessToken, applying opts.
 func NewWithOptions(baseURL, accessToken string, opts Options) *Client {
 	hc := opts.HTTPClient
 	if hc == nil {
@@ -89,12 +74,6 @@ func NewWithOptions(baseURL, accessToken string, opts Options) *Client {
 	}
 }
 
-// do issues an HTTP request with the configured auth headers and decodes a
-// JSON response. Non-2xx responses return an *Error.
-//
-// 429 responses trigger an automatic retry honoring the RateLimit-Reset
-// timestamp, capped at c.maxRetries attempts. Each retry rebuilds the request
-// from scratch since the form body Reader has already been consumed.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, form url.Values, out any) error {
 	fullURL := strings.TrimRight(c.baseURL, "/") + path
 	if len(query) > 0 {
@@ -103,6 +82,8 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		// Rebuilt each attempt: the form body Reader is single-use, so a retry
+		// needs a fresh one.
 		var body io.Reader
 		if len(form) > 0 {
 			body = strings.NewReader(form.Encode())
@@ -139,11 +120,6 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			if err := json.Unmarshal(respBody, out); err != nil {
 				return fmt.Errorf("decode response: %w", err)
 			}
-			// Stash the response so machine output (--json, saved .json, stream
-			// events) can pass it through instead of re-encoding the typed
-			// struct and dropping nulls / unknown fields. respBody is a fresh
-			// per-call slice from io.ReadAll that nothing else aliases, so we
-			// hand it over directly rather than copying.
 			if rr, ok := out.(rawReceiver); ok {
 				rr.setRaw(respBody)
 			}
@@ -175,11 +151,6 @@ func isRetryableStatus(status int) bool {
 	return status == 249 || status == http.StatusTooManyRequests
 }
 
-// backoffFor picks how long to wait before retrying a transient API response.
-// Prefers the documented RateLimit-Reset timestamp, then falls back to an
-// exponential default. A small random jitter is added so concurrent CLIs don't
-// synchronize on the same retry instant.
-// The result is clamped to [minRetrySleep, maxRetrySleep].
 func backoffFor(rl *RateLimit, attempt int, now time.Time) time.Duration {
 	base := time.Duration(0)
 	if rl != nil && rl.Reset > 0 {
@@ -191,7 +162,6 @@ func backoffFor(rl *RateLimit, attempt int, now time.Time) time.Duration {
 	if base == 0 {
 		base = time.Duration(1<<attempt) * time.Second
 	}
-	// Jitter spreads out concurrent retries so CLIs don't synchronize.
 	jitter := time.Duration(rand.IntN(250)) * time.Millisecond
 	d := base + jitter
 	if d < minRetrySleep {
@@ -203,14 +173,11 @@ func backoffFor(rl *RateLimit, attempt int, now time.Time) time.Duration {
 	return d
 }
 
-// dumpRequest writes the outgoing request to c.debugOut when debug is on, with
-// the Authorization header redacted.
 func (c *Client) dumpRequest(req *http.Request) {
 	if !c.debug {
 		return
 	}
-	// Clone so we can redact the Authorization header without mutating the
-	// request that's about to fly.
+	// Clone so we can redact Authorization without mutating the in-flight request.
 	clone := req.Clone(req.Context())
 	if clone.Header.Get("Authorization") != "" {
 		clone.Header.Set("Authorization", "Bearer [redacted]")
@@ -223,12 +190,11 @@ func (c *Client) dumpRequest(req *http.Request) {
 	fmt.Fprintf(c.debugOut, "\nDEBUG ==> outgoing request\n%s\n\n", indentLines(string(dump)))
 }
 
-// dumpResponse writes the response (with body) to c.debugOut when debug is on.
 func (c *Client) dumpResponse(resp *http.Response, body []byte) {
 	if !c.debug {
 		return
 	}
-	// Splice the already-read body bytes back in so DumpResponse can emit them.
+	// Splice the already-read body back in so DumpResponse can emit it.
 	clone := *resp
 	clone.Body = io.NopCloser(strings.NewReader(string(body)))
 	dump, err := httputil.DumpResponse(&clone, true)
@@ -239,8 +205,6 @@ func (c *Client) dumpResponse(resp *http.Response, body []byte) {
 	fmt.Fprintf(c.debugOut, "DEBUG <== incoming response\n%s\n\n", indentLines(string(dump)))
 }
 
-// indentLines prefixes each line with two spaces so debug output is visually
-// distinct from normal CLI text.
 func indentLines(s string) string {
 	if s == "" {
 		return s
@@ -252,10 +216,6 @@ func indentLines(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// parseRateLimit reads the documented `RateLimit-*` headers off h and returns a
-// populated *RateLimit when at least one is present. Missing or unparseable
-// values stay zero rather than failing. RateLimit-Reset is a Unix timestamp in
-// seconds.
 func parseRateLimit(h http.Header) *RateLimit {
 	limit := h.Get("RateLimit-Limit")
 	remaining := h.Get("RateLimit-Remaining")
@@ -276,9 +236,6 @@ func parseRateLimit(h http.Header) *RateLimit {
 	return rl
 }
 
-// extractMessage pulls an error message from a JSON body, trying common keys
-// in order: "message", "error", "error_description". Returns "" if none
-// parsed successfully.
 func extractMessage(body []byte) string {
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -294,15 +251,14 @@ func extractMessage(body []byte) string {
 	return ""
 }
 
-// VerifyOptions tunes a single-email real-time verification request. Each
-// field omitted (nil pointer / zero value) lets the server pick its default.
+// VerifyOptions controls optional parameters for the Verify request.
 type VerifyOptions struct {
-	SMTP      *bool // nil => server default (true). false disables SMTP probing.
-	AcceptAll *bool // nil => server default (false). true performs Accept-All detection.
-	Timeout   int   // seconds, 2-10. 0 => server default (5).
+	SMTP      *bool // nil => server default
+	AcceptAll *bool // nil => server default
+	Timeout   int   // seconds 2-10; 0 => server default
 }
 
-// Verify performs a real-time verification of a single email via GET /verify.
+// Verify verifies a single email address via GET /verify.
 func (c *Client) Verify(ctx context.Context, email string, opts *VerifyOptions) (*VerifyResult, error) {
 	q := url.Values{}
 	q.Set("email", email)
@@ -324,16 +280,14 @@ func (c *Client) Verify(ctx context.Context, email string, opts *VerifyOptions) 
 	return &out, nil
 }
 
-// SubmitBatchOptions tunes a batch verification submission. Each field
-// omitted (zero value / nil pointer) lets the server pick its default.
+// SubmitBatchOptions controls optional parameters for the SubmitBatch request.
 type SubmitBatchOptions struct {
-	URL            string   // optional webhook URL the server POSTs to on completion
-	Retries        *bool    // nil => server default (true)
-	ResponseFields []string // optional subset of result fields to return; nil => all
+	URL            string   // webhook URL; empty => none
+	Retries        *bool    // nil => server default
+	ResponseFields []string // nil => all fields
 }
 
-// SubmitBatch submits emails for batch verification via POST /batch and
-// returns the new batch's id.
+// SubmitBatch submits a list of emails for batch verification via POST /batch.
 func (c *Client) SubmitBatch(ctx context.Context, emails []string, opts *SubmitBatchOptions) (*BatchSubmit, error) {
 	form := url.Values{}
 	form.Set("emails", strings.Join(emails, ","))
@@ -355,8 +309,7 @@ func (c *Client) SubmitBatch(ctx context.Context, emails []string, opts *SubmitB
 	return &out, nil
 }
 
-// Batch fetches the current status (and, when complete or partial=true,
-// per-email results) of a previously submitted batch via GET /batch?id=...
+// Batch fetches the status of a batch by id via GET /batch.
 func (c *Client) Batch(ctx context.Context, id string, partial bool) (*BatchStatus, error) {
 	q := url.Values{}
 	q.Set("id", id)
@@ -370,7 +323,7 @@ func (c *Client) Batch(ctx context.Context, id string, partial bool) (*BatchStat
 	return &out, nil
 }
 
-// Account fetches the authenticated user's account info via GET /account.
+// Account fetches the authenticated account details via GET /account.
 func (c *Client) Account(ctx context.Context) (*Account, error) {
 	var out Account
 	if err := c.do(ctx, http.MethodGet, "/account", nil, nil, &out); err != nil {

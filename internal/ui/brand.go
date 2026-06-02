@@ -9,9 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// brandArt is a braille-art rendering of the Emailable icon (the segmented
-// ring + inner swirl), generated from emailable-icon.svg. Each rune packs a
-// 2×4 dot cell; together with brandColors it's 16 rows × 36 cols.
+// brandArt is the Emailable icon as braille art (16 rows × 36 cols, 2×4 dots/cell).
 const brandArt = "" +
 	"⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣤⣴⣶⣾⣿⣿⣿⣿⣿⣿⣷⣶⣦⣤⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
 	"⠀⠀⠀⠀⠀⠀⢀⣤⣶⣿⣿⣿⣿⣿⣿⣿⡿⠿⠿⠿⣿⣿⣿⣿⣿⣿⣿⣷⣤⡀⠀⠀⠀⠀⠀⠀\n" +
@@ -30,9 +28,7 @@ const brandArt = "" +
 	"⠀⠀⠀⠀⠀⠀⠈⠻⢿⣿⣿⣿⣿⣿⣿⣷⣶⣶⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n" +
 	"⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⠛⠿⠿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"
 
-// brandColors maps each cell of brandArt to an Emailable brand color. Letters
-// index brandPalette; '.' marks a blank (unlit) cell. Same dimensions as
-// brandArt, aligned cell-for-cell.
+// brandColors maps each brandArt cell to a palette letter; '.' = blank.
 const brandColors = "" +
 	"..........KKKKKKKKPPPPPPPPP.........\n" +
 	"......KKKKKKKKKKKKPPPPPPPPPPPP......\n" +
@@ -51,25 +47,16 @@ const brandColors = "" +
 	"......YYYYYYYYYYYY..................\n" +
 	".........YYYYYYYYY.................."
 
-// brandName is the wordmark shown to the right of the mark.
 const brandName = "Emailable"
+const brandNameLine = 7  // vertical midpoint of the mark
+const blankBraille = '⠀' // U+2800, all-dots-off; keeps spacing constant
 
-// brandNameLine is the row (0-indexed) the name is rendered beside — the
-// vertical middle of the mark.
-const brandNameLine = 7
-
-// blankBraille is U+2800, an all-dots-off braille cell. Used as the glyph for
-// unrevealed/unlit cells so spacing stays constant.
-const blankBraille = '⠀'
-
-// BrandPurple is Emailable's primary brand purple, used for the wordmark text.
+// BrandPurple is the primary Emailable brand color.
 var BrandPurple = lipgloss.Color("#7e61ff")
 
-// BrandPurpleSoft is a lighter tint for supporting chrome (form gutters).
+// BrandPurpleSoft is a lighter brand tint used for form gutters.
 var BrandPurpleSoft = lipgloss.Color("#c7c2ff")
 
-// brandPalette maps the color letters in brandColors to their brand hex.
-// '.' has no entry — it's never looked up because blank cells aren't styled.
 var brandPalette = map[byte]lipgloss.Color{
 	'Y': lipgloss.Color("#ffcb60"), // yellow
 	'P': lipgloss.Color("#7e61ff"), // purple
@@ -80,10 +67,8 @@ var brandPalette = map[byte]lipgloss.Color{
 	'O': lipgloss.Color("#ff9c5b"), // orange
 }
 
-// brandGrid is the parsed, render-ready form of the embedded art. The color
-// grid is canonical for width and lit-ness ('.' == blank); glyph rows are
-// padded with blankBraille to match, so a lost trailing blank in the literal
-// can't desync the two grids.
+// brandGrid is the parsed art. Color grid is canonical; glyph rows are padded
+// with blankBraille so trailing-blank loss in the literal can't desync them.
 type brandGrid struct {
 	glyphs [][]rune
 	colors [][]byte
@@ -95,7 +80,6 @@ var (
 	parsedBrand brandGrid
 )
 
-// grid parses brandArt/brandColors once and caches the result.
 func grid() brandGrid {
 	brandOnce.Do(func() {
 		colorLines := strings.Split(brandColors, "\n")
@@ -109,8 +93,6 @@ func grid() brandGrid {
 		for r := range colorLines {
 			cr := []byte(colorLines[r])
 			gr := []rune(glyphLines[r])
-			// Pad the glyph row to the color row's width; trailing blanks may
-			// have been dropped from the literal.
 			for len(gr) < len(cr) {
 				gr = append(gr, blankBraille)
 			}
@@ -122,7 +104,6 @@ func grid() brandGrid {
 	return parsedBrand
 }
 
-// paletteStyles is brandPalette pre-wrapped as lipgloss styles, built once.
 var paletteStyles = func() map[byte]lipgloss.Style {
 	m := make(map[byte]lipgloss.Style, len(brandPalette))
 	for k, c := range brandPalette {
@@ -131,8 +112,6 @@ var paletteStyles = func() map[byte]lipgloss.Style {
 	return m
 }()
 
-// renderBrandStatic prints the mark once with no color and no animation, with
-// the name beside it. Used when w isn't a color TTY (piped output, NO_COLOR).
 func renderBrandStatic(w io.Writer) {
 	g := grid()
 	for r := 0; r < g.rows; r++ {

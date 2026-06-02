@@ -1,31 +1,22 @@
 package api
 
-// rawReceiver is implemented by response types that retain the verbatim JSON
-// body the server returned. Client.do calls setRaw after a successful decode so
-// machine output can pass the original bytes through unchanged.
+// rawReceiver is implemented by response types that cache the verbatim JSON body
+// so machine output can pass it through unchanged (re-encoding drops nulls / unknown fields).
 type rawReceiver interface {
 	setRaw([]byte)
 }
 
-// rawJSON holds a captured response body. Embedding it gives a type the raw
-// passthrough plumbing for free. The field is unexported so encoding/json
-// never round-trips it back into output.
+// rawJSON holds the captured response body; the field is unexported so
+// encoding/json never round-trips it back into output.
 type rawJSON struct {
 	raw []byte
 }
 
 func (r *rawJSON) setRaw(b []byte) { r.raw = b }
 
-// RawJSON returns the verbatim response body the server sent, or nil if the
-// value wasn't produced by an API call (e.g. constructed in a test). Callers
-// emitting machine output should prefer these bytes over re-encoding.
 func (r *rawJSON) RawJSON() []byte { return r.raw }
 
-// VerifyResult is the response from GET /v1/verify.
-//
-// The typed fields below drive human/CSV rendering. JSON output is served from
-// the captured raw body (see rawJSON), so nullable fields and any field this
-// struct doesn't model still pass through unchanged.
+// VerifyResult is the response from GET /verify.
 type VerifyResult struct {
 	rawJSON
 	Email        string  `json:"email"`
@@ -51,33 +42,22 @@ type VerifyResult struct {
 	Duration     float64 `json:"duration,omitempty"`
 }
 
-// BatchSubmit is the response from POST /v1/batch.
+// BatchSubmit is the response from POST /batch when a batch is created.
 type BatchSubmit struct {
 	rawJSON
 	ID      string `json:"id"`
 	Message string `json:"message"`
 }
 
-// BatchTotalCounts is the `total_counts` object returned alongside a
-// partial-results payload. Only Total and Processed are load-bearing for
-// progress display.
+// BatchTotalCounts holds aggregate progress counts from a partial batch response.
 type BatchTotalCounts struct {
 	Total     int `json:"total"`
 	Processed int `json:"processed"`
 }
 
-// BatchStatus is the response from GET /v1/batch.
-//
-// The API returns three distinct payload shapes that this struct merges:
-//
-//   - In-progress (partial=false): top-level Total + Processed counts, no
-//     Emails, no DownloadFile.
-//   - Completed small batch (≤1000): Emails slice populated, Total/Processed
-//     dropped from the payload.
-//   - Completed large batch (>1000): DownloadFile URL only.
-//   - Partial snapshot (partial=true): Emails contains the rows ready so far,
-//     a top-level Message describes the partial state, and progress lives
-//     under TotalCounts (the top-level Total/Processed are NOT used).
+// BatchStatus merges three API payload shapes: in-progress (Total/Processed),
+// completed small batch (Emails), completed large batch (DownloadFile), and
+// partial snapshot (TotalCounts — top-level Total/Processed are NOT set).
 type BatchStatus struct {
 	rawJSON
 	ID           string            `json:"id,omitempty"`
@@ -91,11 +71,8 @@ type BatchStatus struct {
 	TotalCounts  *BatchTotalCounts `json:"total_counts,omitempty"`
 }
 
-// IsComplete reports whether the batch has finished processing.
-//
-// TotalCounts is checked before the top-level counts because a partial-results
-// payload omits the latter and would otherwise fall through to the
-// Emails-populated branch and look complete prematurely.
+// IsComplete checks TotalCounts before top-level counts: partial-results payloads
+// omit the top-level counts, which would otherwise look complete prematurely.
 func (b *BatchStatus) IsComplete() bool {
 	if b.DownloadFile != "" {
 		return true
@@ -112,9 +89,7 @@ func (b *BatchStatus) IsComplete() bool {
 	return false
 }
 
-// Progress returns (processed, total, ok). ok is false when the payload
-// carries no progress counters (e.g. a completed small-batch payload that
-// dropped them).
+// Progress returns the processed and total counts for b, and ok=false when progress is unknown.
 func (b *BatchStatus) Progress() (processed, total int, ok bool) {
 	if b.TotalCounts != nil {
 		return b.TotalCounts.Processed, b.TotalCounts.Total, true
@@ -125,7 +100,7 @@ func (b *BatchStatus) Progress() (processed, total int, ok bool) {
 	return 0, 0, false
 }
 
-// Account is the response from GET /v1/account.
+// Account is the response from GET /account.
 type Account struct {
 	rawJSON
 	OwnerEmail       string `json:"owner_email"`

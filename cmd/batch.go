@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newBatchCmd returns the `emailable batch` command group.
 func newBatchCmd() *cobra.Command {
 	batch := &cobra.Command{
 		Use:          "batch",
@@ -144,10 +143,7 @@ func newBatchCmd() *cobra.Command {
 			}
 
 			if wait {
-				// Surface the id before polling so a ctrl-c mid-wait still
-				// leaves it on screen for a later `batch get <id>`. Suppressed
-				// in JSON mode (keeps scripted output a single object) and in
-				// quiet mode (the id is chrome there).
+				// Print before polling so ctrl-c mid-wait still leaves the id visible.
 				if !jsonEff && !cctx.Quiet {
 					printBatchID(cmd.ErrOrStderr(), submit.ID)
 				}
@@ -167,9 +163,6 @@ func newBatchCmd() *cobra.Command {
 				return renderBatchOutcome(cmd, cctx, final, submit.ID, outPath, showAll)
 			}
 
-			// In JSON mode, pass the submit response (id + message, plus any
-			// future fields) through unchanged rather than reshaping it to a
-			// bare {"id":...}; f.Print emits the captured raw body.
 			return f.Print(submit)
 		},
 	}
@@ -178,7 +171,6 @@ func newBatchCmd() *cobra.Command {
 	verify.Flags().StringP("output", "o", "", "Write results to FILE (.csv or .json; format inferred from extension)")
 	verify.Flags().Bool("all", false, "Print the full results table inline instead of a summary")
 	verify.Flags().Bool("stream", false, "Emit one JSON event per line while polling (implies --wait and --json)")
-	// Only flags the user explicitly set are forwarded, so server defaults stay in play.
 	verify.Flags().String("url", "", "URL that will receive the batch results via HTTP POST")
 	verify.Flags().Bool("retries", true, "Retry verifications when mail servers return certain responses, increasing accuracy")
 	verify.Flags().StringSlice("response-fields", nil, "Fields to include in the response (default: all)")
@@ -187,8 +179,6 @@ func newBatchCmd() *cobra.Command {
 	return batch
 }
 
-// submitBatchOptionsFromFlags builds SubmitBatchOptions, leaving fields unset
-// for flags the user didn't touch so server defaults apply.
 func submitBatchOptionsFromFlags(cmd *cobra.Command) (*api.SubmitBatchOptions, error) {
 	opts := &api.SubmitBatchOptions{}
 	any := false
@@ -222,9 +212,6 @@ func submitBatchOptionsFromFlags(cmd *cobra.Command) (*api.SubmitBatchOptions, e
 	return opts, nil
 }
 
-// printBatchID writes a one-time `Batch ID: <id>` line with a dimmed label.
-// Printed before the bar/spinner starts so the id survives in scrollback and a
-// ctrl-c mid-wait still leaves the user something to `batch get`.
 func printBatchID(w io.Writer, id string) {
 	stf := output.StylerFor(w)
 	label := stf(lipgloss.NewStyle().Foreground(lipgloss.Color("241"))).Render("Batch ID:")
@@ -252,12 +239,10 @@ func (s *batchStreamer) emit(payload map[string]any) error {
 	return err
 }
 
-// emitSubmitted emits the initial `submitted` event for a newly created batch.
 func (s *batchStreamer) emitSubmitted(id string) error {
 	return s.emit(map[string]any{"event": "submitted", "id": id})
 }
 
-// emitProgress emits a `progress` event; fired once per poll with a known total.
 func (s *batchStreamer) emitProgress(id string, processed, total int) error {
 	return s.emit(map[string]any{
 		"event":     "progress",
@@ -267,14 +252,6 @@ func (s *batchStreamer) emitProgress(id string, processed, total int) error {
 	})
 }
 
-// emitComplete emits the terminal `complete` event carrying the final status.
-//
-// When the status carries the verbatim API body, its fields (emails,
-// total_counts, reason_counts, …) are merged through unchanged so per-row
-// nulls and unmodeled fields survive — matching the passthrough guarantee of
-// the non-streaming --json output. `event` and `id` are stamped on top. When
-// no raw body is present (e.g. a hand-built status in a test), it falls back to
-// reconstructing the event from the typed fields.
 func (s *batchStreamer) emitComplete(id string, status *api.BatchStatus) error {
 	payload := map[string]any{
 		"event": "complete",
@@ -285,8 +262,7 @@ func (s *batchStreamer) emitComplete(id string, status *api.BatchStatus) error {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &fields); err == nil {
 			for k, v := range fields {
-				// event/id are CLI-owned envelope keys; never let the API
-				// body shadow them.
+				// Never let the API body shadow CLI-owned envelope keys.
 				if k == "event" || k == "id" {
 					continue
 				}
@@ -311,12 +287,6 @@ func (s *batchStreamer) emitComplete(id string, status *api.BatchStatus) error {
 	return s.emit(payload)
 }
 
-// applyStreamImplications turns on --wait and --json when --stream is set, both
-// being preconditions for streaming (nothing to stream without polling; events
-// are JSON). Rather than error on a missing flag, we just enable them.
-//
-// Returns the effective (waitOut, jsonOut) pair; the caller threads jsonOut
-// through downstream output-format decisions. No package-level state is touched.
 func applyStreamImplications(stream, wait, jsonIn bool) (waitOut, jsonOut bool) {
 	if !stream {
 		return wait, jsonIn
@@ -324,22 +294,14 @@ func applyStreamImplications(stream, wait, jsonIn bool) (waitOut, jsonOut bool) 
 	return true, true
 }
 
-// Polling schedule for waitForCompletion. The first fastPollWindow of the
-// wait uses fastPollInterval so small batches (which often finish in a few
-// seconds) return promptly; after that we back off to slowPollInterval to
-// avoid hammering the API on long-running batches.
+// Fast-then-slow polling: short interval for the first fastPollWindow, then back off.
 const (
 	fastPollInterval = 1 * time.Second
 	slowPollInterval = 5 * time.Second
 	fastPollWindow   = 10 * time.Second
 )
 
-// waitForCompletion polls the batch status until processing is complete and
-// returns the final status. In non-JSON mode it renders a progress bar; when sw
-// is non-nil it emits `progress` events instead and suppresses the bar.
-//
-// Progress output goes to stderr so piping stdout (e.g. `verify --wait >
-// results.json`) doesn't mix the bar into the result payload.
+// waitForCompletion polls until completion. Progress goes to stderr so piped stdout stays clean.
 func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonMode bool, sw *batchStreamer, progressOut io.Writer) (*api.BatchStatus, error) {
 	if progressOut == nil {
 		progressOut = os.Stderr
@@ -352,19 +314,15 @@ func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonM
 	)
 	start := time.Now()
 
-	// Queued-phase spinner: animates while we're polling with total=0 (server
-	// hasn't started processing yet). Stops as soon as a bar exists.
 	queueSpinner := ui.NewTo(progressOut, "Queued")
 	if uiEnabled {
 		queueSpinner.Start()
 	}
 
 	for {
-		// Poll with partial=false intentionally. partial=true returns the
-		// "completed" shape (emails populated) the moment ANY result is ready,
-		// so treating it as done catches the batch mid-processing. partial=false
-		// stays in the "processing" shape until the whole batch finishes, and
-		// gives reliable processed/total counts for the progress bar.
+		// partial=false: stays in "processing" shape until the whole batch finishes,
+		// giving reliable counts. partial=true would signal done as soon as any result
+		// is ready, catching the batch mid-run.
 		s, err := client.Batch(ctx, id, false)
 		if err != nil {
 			return nil, err
@@ -372,13 +330,7 @@ func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonM
 
 		if uiEnabled && s.Total > 0 {
 			if bar == nil || s.Total != lastTotal {
-				// First known total: kill the queued spinner before drawing
-				// the bar so the two don't fight for the line.
 				queueSpinner.Stop()
-
-				// Fixed 40-cell bar (auto-capped to terminal width). A
-				// constrained bar reads as a progress indicator rather than a
-				// full-width "wall" on short jobs.
 				bar = ui.NewBar(progressOut, 40)
 				bar.SetMessage(fmt.Sprintf("Verifying %d emails", s.Total))
 				bar.Start()
@@ -387,20 +339,15 @@ func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonM
 			bar.Set(s.Processed, s.Total)
 		}
 
-		// Stream-write errors are non-fatal; keep polling.
 		if sw != nil && s.Total > 0 {
 			_ = sw.emitProgress(id, s.Processed, s.Total)
 		}
 
 		if s.IsComplete() {
-			// Stop animations BEFORE returning so the final 100% frame
-			// is rendered and a newline written.
 			queueSpinner.Stop()
 
-			// Counts-match completion (total>0 && processed>=total) can race
-			// with the API switching to the "completed" payload that carries
-			// the Emails slice. Retry briefly so callers always get the
-			// canonical completed shape instead of an empty Emails snapshot.
+			// Counts-match completion can race with the API switching to the
+			// "completed" payload; retry briefly to get the canonical shape with Emails.
 			for i := 0; i < 3 && s.Total > 0 && len(s.Emails) == 0; i++ {
 				select {
 				case <-ctx.Done():
@@ -415,8 +362,6 @@ func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonM
 			}
 
 			if bar != nil {
-				// The bar self-erases on Stop; the caller's summary line is
-				// the canonical "done" signal, so no need to retitle first.
 				bar.Stop()
 			}
 			return s, nil
@@ -434,9 +379,6 @@ func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonM
 	}
 }
 
-// saveToFile writes v to path and prints a success line to stderr in non-JSON
-// mode. The success line is suppressed in JSON mode (scripted output) and quiet
-// mode.
 func saveToFile(cmd *cobra.Command, cctx *cmdCtx, v any, path string) error {
 	n, err := output.WriteResults(v, output.SaveOptions{
 		Path:      path,
@@ -446,8 +388,6 @@ func saveToFile(cmd *cobra.Command, cctx *cmdCtx, v any, path string) error {
 		return err
 	}
 	if !cctx.JSONMode {
-		// Success goes to stderr so stdout (the actual results file path
-		// or JSON payload) stays scriptable.
 		h := &output.Human{W: cmd.ErrOrStderr(), Quiet: cctx.Quiet}
 		msg := savedMessage(n, path)
 		return h.Success(msg)
@@ -455,9 +395,6 @@ func saveToFile(cmd *cobra.Command, cctx *cmdCtx, v any, path string) error {
 	return nil
 }
 
-// savedMessage returns the human "Saved …" line for a successful file
-// write. Singular/plural for known row counts; falls back to a count-free
-// "Saved to <file>" when the count is unknown (e.g. account JSON dumps).
 func savedMessage(n int, path string) string {
 	switch {
 	case n <= 0:
@@ -469,12 +406,6 @@ func savedMessage(n int, path string) string {
 	}
 }
 
-// renderBatchOutcome handles the final stdout/file rendering for a batch
-// retrieval, dispatching on --output, --json, download/in-progress state, and
-// whether per-email results are present.
-//
-// The per-email table is opt-in via --all regardless of batch size: UX feedback
-// was that the table is rarely useful at a glance and the summary reads better.
 func renderBatchOutcome(cmd *cobra.Command, cctx *cmdCtx, status *api.BatchStatus, batchID, outPath string, showAll bool) error {
 	if outPath != "" {
 		return saveToFile(cmd, cctx, status, outPath)
@@ -483,8 +414,6 @@ func renderBatchOutcome(cmd *cobra.Command, cctx *cmdCtx, status *api.BatchStatu
 		return newOutput(cmd.OutOrStdout(), true).Print(status)
 	}
 	if status.DownloadFile != "" || len(status.Emails) == 0 {
-		// >1000-emails download case, or a still-processing batch with no
-		// per-email results. Defer to the formatter's dispatch.
 		return newOutput(cmd.OutOrStdout(), false).Print(status)
 	}
 

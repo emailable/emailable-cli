@@ -10,8 +10,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newStatusCmd returns the `emailable status` command: local auth state, no
-// network call.
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:          "status",
@@ -27,9 +25,6 @@ func newStatusCmd() *cobra.Command {
 	}
 }
 
-// runStatusE prints the active environment, file paths, and stored credential
-// state. Never hits the network. Human mode renders a labeled block; --json
-// emits a flat object.
 func runStatusE(cmd *cobra.Command, _ []string) error {
 	cctx, err := newCmdCtx(jsonOutput)
 	if err != nil {
@@ -72,9 +67,6 @@ func runStatusE(cmd *cobra.Command, _ []string) error {
 	return printStatusHuman(cmd, cctx, source, loggedIn, expiresAt, expiresIn)
 }
 
-// authSourceFor returns the credential source the CLI would use for the next
-// request, distinguishing the API-key locations (env, stored). Returns "oauth"
-// for a stored OAuth token and "none" when no credentials are configured.
 func authSourceFor(cctx *cmdCtx) (source string, loggedIn bool) {
 	if _, src := cctx.effectiveAPIKey(); src != apiKeySourceNone {
 		return string(src), true
@@ -85,7 +77,6 @@ func authSourceFor(cctx *cmdCtx) (source string, loggedIn bool) {
 	return string(apiKeySourceMissing), false
 }
 
-// printStatusHuman renders the status block for human consumption.
 func printStatusHuman(cmd *cobra.Command, cctx *cmdCtx, source string, loggedIn bool, expiresAt string, expiresIn int) error {
 	w := cmd.OutOrStdout()
 	stf := output.StylerFor(w)
@@ -147,9 +138,6 @@ func printStatusHuman(cmd *cobra.Command, cctx *cmdCtx, source string, loggedIn 
 	return nil
 }
 
-// humanizeSeconds renders a duration as "Nd", "Nh", "Nm", or "Ns" using the
-// largest unit that yields a non-zero integer. Used in status for the
-// "expires in" hint; full precision lives in the expires_at timestamp.
 func humanizeSeconds(s int) string {
 	switch {
 	case s >= 86400:
