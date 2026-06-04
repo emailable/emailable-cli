@@ -64,11 +64,13 @@ emailable batch get <id> --output results.csv  # or .json
 ```
 
 To consume results as NDJSON (one row per line), filter the `emails`
-array with `--jq`:
+array with `--jq`. Pair with `--wait` so the payload is complete before
+filtering — a still-verifying batch has no `emails` field, so `.emails[]`
+would error and exit non-zero:
 
 ```bash
-emailable batch get <id> --jq '.emails[]'
-emailable batch get <id> --jq '.emails[] | select(.state == "deliverable") | .email'
+emailable batch get <id> --wait --jq '.emails[]'
+emailable batch get <id> --wait --jq '.emails[] | select(.state == "deliverable") | .email'
 ```
 
 ## Account credits

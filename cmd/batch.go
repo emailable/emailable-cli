@@ -64,7 +64,7 @@ func newBatchCmd() *cobra.Command {
 				if partial {
 					return fmt.Errorf("--wait and --partial can't be combined: --wait already polls until completion")
 				}
-				s, err := waitForCompletion(cmd.Context(), client, id, cctx.JSONMode, cmd.ErrOrStderr())
+				s, err := waitForCompletion(cmd.Context(), client, id, cctx.JSONMode || cctx.Quiet, cmd.ErrOrStderr())
 				if err != nil {
 					return err
 				}

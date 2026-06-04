@@ -282,11 +282,13 @@ drops straight into a script. Objects and arrays are printed as JSON.
 
 To stream batch results as [NDJSON](https://jsonlines.org/) — one result row
 per line, ready to pipe into `while read`, `wc -l`, or another tool — filter
-the completed batch's `emails` array with `.emails[]`:
+the completed batch's `emails` array with `.emails[]`. Pair it with `--wait`
+so the payload is complete before filtering (a still-verifying batch has no
+`emails` field, which would make `.emails[]` error):
 
 ```bash
-emailable batch get 5cfc... --jq '.emails[]'                                  # one row per line
-emailable batch get 5cfc... --jq '.emails[] | select(.state == "deliverable") | .email'
+emailable batch get 5cfc... --wait --jq '.emails[]'                           # one row per line
+emailable batch get 5cfc... --wait --jq '.emails[] | select(.state == "deliverable") | .email'
 ```
 
 ### Errors
