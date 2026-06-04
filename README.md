@@ -216,8 +216,6 @@ Flags:
 - `--all` — with `--wait`, print the full results table instead of a summary
 - `-o, --output <file>` — with `--wait`, write the results to FILE
   (`.csv` or `.json`; format inferred from extension)
-- `--stream` — emit one JSON event per line as the batch advances; implies
-  `--wait` and `--json` (see [NDJSON streaming](#ndjson-streaming))
 - `--url <url>` — URL that will receive the batch results via HTTP POST
 - `--retries=true|false` — retry verifications when mail servers return
   certain responses, increasing accuracy (default: `true`)
@@ -240,8 +238,6 @@ Flags:
 - `--all` — print the full results table inline instead of a summary
 - `-o, --output <file>` — write the results to FILE (`.csv` or `.json`;
   format inferred from extension)
-- `--stream` — emit one JSON event per line as the batch advances; implies
-  `--wait` and `--json` (see [NDJSON streaming](#ndjson-streaming))
 
 ### Account
 
@@ -267,8 +263,7 @@ emailable account status --json
 
 Payloads pass through from the [Emailable API](https://emailable.com/docs/api/?code_language=cli)
 unchanged — the CLI doesn't re-shape or add fields. See the API docs for
-the field reference. Error payloads and NDJSON stream events (below) are
-CLI-specific.
+the field reference. Error payloads are CLI-specific.
 
 ### Filtering with `--jq`
 
@@ -283,36 +278,17 @@ emailable batch get 5cfc... --jq '.emails[] | select(.state == "deliverable") | 
 ```
 
 A string result is printed raw (unquoted, one per line), like `jq -r`, so it
-drops straight into a script. Objects and arrays are printed as JSON. Combined
-with `--stream`, the filter runs against each NDJSON event as it arrives (see
-below).
+drops straight into a script. Objects and arrays are printed as JSON.
 
-### NDJSON streaming
-
-`batch verify --stream` and `batch get --stream` emit one JSON object per
-line on stdout while polling, instead of one large object at the end.
-Useful for AI agents and long-running scripts that want to react to progress
-without waiting for completion. `--stream` automatically turns on `--wait`
-and `--json`, so neither needs to be passed explicitly.
+To stream batch results as [NDJSON](https://jsonlines.org/) — one result row
+per line, ready to pipe into `while read`, `wc -l`, or another tool — filter
+the completed batch's `emails` array with `.emails[]`. Pair it with `--wait`
+so the payload is complete before filtering (a still-verifying batch has no
+`emails` field, which would make `.emails[]` error):
 
 ```bash
-emailable batch verify emails.csv --stream
-```
-
-```
-{"event":"submitted","id":"5cfc..."}
-{"event":"progress","id":"5cfc...","processed":100,"total":1000}
-{"event":"progress","id":"5cfc...","processed":500,"total":1000}
-{"event":"complete","id":"5cfc...","status":"complete","reason_counts":{...},"emails":[...]}
-```
-
-Add `--jq` to filter each event as it streams. The filter sees the event
-envelope (`event`, `id`, …), so guard on the event type; events the filter
-doesn't match are skipped:
-
-```bash
-emailable batch verify emails.csv --stream \
-  --jq 'select(.event == "complete") | .emails[] | .email'
+emailable batch get 5cfc... --wait --jq '.emails[]'                           # one row per line
+emailable batch get 5cfc... --wait --jq '.emails[] | select(.state == "deliverable") | .email'
 ```
 
 ### Errors

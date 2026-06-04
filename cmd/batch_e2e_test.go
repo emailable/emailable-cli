@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/emailable/emailable-cli/internal/api"
-	"github.com/emailable/emailable-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -322,171 +320,6 @@ func TestBatchGet_Wait(t *testing.T) {
 	}
 }
 
-// TestBatchVerify_StreamMode validates --stream emits NDJSON events to
-// stdout. Implies --wait + --json.
-func TestBatchVerify_StreamMode(t *testing.T) {
-	if testing.Short() {
-		t.Skip("polls multiple times, slow")
-	}
-	var calls int32
-	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			writeJSON(w, map[string]any{"id": "bch_stream"})
-		case http.MethodGet:
-			n := atomic.AddInt32(&calls, 1)
-			if n < 2 {
-				writeJSON(w, map[string]any{
-					"id": "bch_stream", "total": 2, "processed": 1, "status": "verifying",
-				})
-				return
-			}
-			writeJSON(w, completedBatchPayload("bch_stream"))
-		}
-	}))
-	env.seedAPIKey(t, "sk_test_xxx")
-
-	res := runRoot(t, "batch", "verify", "a@x.com", "b@y.com", "--stream")
-	if res.Err != nil {
-		t.Fatalf("execute: %v\nstderr: %s", res.Err, res.Stderr.String())
-	}
-	lines := strings.Split(strings.TrimSpace(res.Stdout.String()), "\n")
-	if len(lines) < 3 {
-		t.Fatalf("expected at least 3 NDJSON lines (submitted, progress, complete), got: %v", lines)
-	}
-	// First line should be the `submitted` event.
-	first := decodeJSON(t, []byte(lines[0]))
-	if first["event"] != "submitted" {
-		t.Errorf("expected submitted event first, got %v", first)
-	}
-	// Last line should be `complete` with emails populated.
-	last := decodeJSON(t, []byte(lines[len(lines)-1]))
-	if last["event"] != "complete" {
-		t.Errorf("expected complete event last, got %v", last)
-	}
-}
-
-// TestStream_CompleteEventPassesThroughVerbatim confirms the NDJSON `complete`
-// event merges the raw batch body through unchanged: per-row nulls and the
-// full total_counts survive, rather than being reconstructed from typed fields.
-func TestStream_CompleteEventPassesThroughVerbatim(t *testing.T) {
-	if testing.Short() {
-		t.Skip("polls, slow")
-	}
-	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPost {
-			_, _ = w.Write([]byte(`{"id":"bch_raw"}`))
-			return
-		}
-		_, _ = w.Write([]byte(rawBatchPayload))
-	}))
-	env.seedAPIKey(t, "sk_test_xxx")
-
-	res := runRoot(t, "batch", "verify", "a@b.com", "--stream")
-	if res.Err != nil {
-		t.Fatalf("execute: %v\nstderr: %s", res.Err, res.Stderr.String())
-	}
-	lines := strings.Split(strings.TrimSpace(res.Stdout.String()), "\n")
-	last := decodeJSON(t, []byte(lines[len(lines)-1]))
-	if last["event"] != "complete" {
-		t.Fatalf("expected complete event last, got %v", last)
-	}
-	tc, ok := last["total_counts"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected total_counts object in complete event, got %v", last["total_counts"])
-	}
-	if tc["duplicate"] != float64(5) {
-		t.Errorf("expected total_counts.duplicate=5 to pass through, got %v", tc["duplicate"])
-	}
-	emails, ok := last["emails"].([]any)
-	if !ok || len(emails) != 1 {
-		t.Fatalf("expected 1 email in complete event, got %v", last["emails"])
-	}
-	row := emails[0].(map[string]any)
-	if v, present := row["accept_all"]; !present || v != nil {
-		t.Errorf("expected per-row accept_all to stay null, got present=%v value=%v", present, v)
-	}
-}
-
-// TestStream_CompleteEventStaysSingleLine guards the NDJSON "one object per
-// line" contract when the API returns a pretty-printed body. Raw fields are
-// embedded as json.RawMessage, but json.Marshal compacts marshaler output, so
-// the emitted complete event must contain no embedded newlines regardless of
-// how the server formatted its JSON.
-func TestStream_CompleteEventStaysSingleLine(t *testing.T) {
-	if testing.Short() {
-		t.Skip("polls, slow")
-	}
-	// Deliberately indented body with real newlines inside the objects.
-	prettyBody := "{\n  \"id\": \"bch_pretty\",\n  \"emails\": [\n    {\n      \"email\": \"a@b.com\",\n      \"state\": \"deliverable\"\n    }\n  ],\n  \"total_counts\": {\n    \"deliverable\": 1,\n    \"processed\": 1,\n    \"total\": 1\n  }\n}"
-	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPost {
-			_, _ = w.Write([]byte(`{"id":"bch_pretty"}`))
-			return
-		}
-		_, _ = w.Write([]byte(prettyBody))
-	}))
-	env.seedAPIKey(t, "sk_test_xxx")
-
-	res := runRoot(t, "batch", "verify", "a@b.com", "--stream")
-	if res.Err != nil {
-		t.Fatalf("execute: %v\nstderr: %s", res.Err, res.Stderr.String())
-	}
-	// Every non-empty stdout line must be independently parseable JSON; a
-	// leaked embedded newline would split one event across lines and fail here.
-	for _, line := range strings.Split(strings.TrimSpace(res.Stdout.String()), "\n") {
-		if line == "" {
-			continue
-		}
-		var obj map[string]any
-		if err := json.Unmarshal([]byte(line), &obj); err != nil {
-			t.Fatalf("NDJSON line is not a single valid JSON object: %v\nline: %q", err, line)
-		}
-	}
-}
-
-// Unit-level tests for the helpers that were 0% covered: pure functions that
-// don't need the httptest harness.
-
-func TestApplyStreamImplications(t *testing.T) {
-	// stream=false: both wait and json pass through unchanged.
-	gotWait, gotJSON := applyStreamImplications(false, true, false)
-	if !gotWait {
-		t.Errorf("stream=false, wait=true: gotWait=%v want true", gotWait)
-	}
-	if gotJSON {
-		t.Errorf("stream=false should not flip jsonOut, got %v", gotJSON)
-	}
-
-	gotWait, gotJSON = applyStreamImplications(false, false, true)
-	if gotWait {
-		t.Errorf("stream=false, wait=false: gotWait=%v want false", gotWait)
-	}
-	if !gotJSON {
-		t.Errorf("stream=false should pass json through, got %v", gotJSON)
-	}
-
-	// stream=true: forces both wait and json to true, regardless of inputs.
-	gotWait, gotJSON = applyStreamImplications(true, false, false)
-	if !gotWait {
-		t.Errorf("stream=true should force wait=true, gotWait=%v", gotWait)
-	}
-	if !gotJSON {
-		t.Errorf("stream=true should force jsonOut=true, gotJSON=%v", gotJSON)
-	}
-
-	// And the package-level jsonOutput must NOT be mutated.
-	prev := jsonOutput
-	jsonOutput = false
-	t.Cleanup(func() { jsonOutput = prev })
-	_, _ = applyStreamImplications(true, false, false)
-	if jsonOutput {
-		t.Errorf("applyStreamImplications must not mutate the global jsonOutput, got %v", jsonOutput)
-	}
-}
-
 func TestSubmitBatchOptionsFromFlags_NoneSet(t *testing.T) {
 	verify := &cobra.Command{Use: "verify"}
 	verify.Flags().String("url", "", "")
@@ -530,68 +363,6 @@ func TestSubmitBatchOptionsFromFlags_AllSet(t *testing.T) {
 	}
 	if got := strings.Join(opts.ResponseFields, ","); got != "email,state" {
 		t.Errorf("ResponseFields: got %q", got)
-	}
-}
-
-// TestBatchStreamer_Events covers the emit* helpers end-to-end without going
-// through the network path.
-func TestBatchStreamer_Events(t *testing.T) {
-	var buf bytes.Buffer
-	s := &batchStreamer{f: &output.JSON{W: &buf, Compact: true}}
-	if err := s.emitSubmitted("bch_x"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.emitProgress("bch_x", 1, 10); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.emitComplete("bch_x", &api.BatchStatus{
-		Status: "complete",
-		Reason: map[string]int{"accepted_email": 1},
-		Emails: []api.VerifyResult{{Email: "a@b.com", State: "deliverable"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("expected 3 lines, got %d: %v", len(lines), lines)
-	}
-	for i, want := range []string{"submitted", "progress", "complete"} {
-		var got map[string]any
-		if err := json.Unmarshal([]byte(lines[i]), &got); err != nil {
-			t.Fatalf("line %d not JSON: %v", i, err)
-		}
-		if got["event"] != want {
-			t.Errorf("line %d event: got %v, want %q", i, got["event"], want)
-		}
-	}
-}
-
-// TestBatchStreamer_CompleteDownloadFile covers the large-batch branch of
-// emitComplete (DownloadFile populated, Emails empty).
-func TestBatchStreamer_CompleteDownloadFile(t *testing.T) {
-	var buf bytes.Buffer
-	s := &batchStreamer{f: &output.JSON{W: &buf, Compact: true}}
-	if err := s.emitComplete("bch_big", &api.BatchStatus{
-		DownloadFile: "https://files.example/big.csv",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	var got map[string]any
-	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got["download_file"] != "https://files.example/big.csv" {
-		t.Errorf("expected download_file in payload, got %v", got)
-	}
-}
-
-// TestNewStreamerIfEnabled returns nil when streaming is off.
-func TestNewStreamerIfEnabled(t *testing.T) {
-	if s := newStreamerIfEnabled(&cobra.Command{}, false); s != nil {
-		t.Errorf("expected nil when stream=false, got %+v", s)
-	}
-	if s := newStreamerIfEnabled(&cobra.Command{}, true); s == nil {
-		t.Errorf("expected non-nil when stream=true")
 	}
 }
 
