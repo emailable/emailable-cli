@@ -47,20 +47,13 @@ or a plain-text file with one address per line. Pass `-` to read
 newline-separated addresses from stdin.
 
 ```bash
-emailable batch verify emails.csv --field email --stream
+emailable batch verify emails.csv --field email --wait --json
 emailable batch verify a@example.com b@example.com --wait --json
-cat emails.txt | emailable batch verify - --stream
+cat emails.txt | emailable batch verify - --wait --json
 ```
 
-Prefer `--stream` over `--wait` when reacting to progress: it implies
-both `--wait` and `--json` and emits one NDJSON event per line —
-`submitted`, repeated `progress`, then `complete`:
-
-```
-{"event":"submitted","id":"5cfc..."}
-{"event":"progress","id":"5cfc...","processed":500,"total":1000}
-{"event":"complete","id":"5cfc...","status":"complete","emails":[...]}
-```
+`--wait` polls until the batch finishes (a progress bar renders on
+stderr in human mode), then prints the completed payload.
 
 Get the status or results of a batch later:
 
@@ -68,6 +61,14 @@ Get the status or results of a batch later:
 emailable batch get <id> --json
 emailable batch get <id> --wait --json
 emailable batch get <id> --output results.csv  # or .json
+```
+
+To consume results as NDJSON (one row per line), filter the `emails`
+array with `--jq`:
+
+```bash
+emailable batch get <id> --jq '.emails[]'
+emailable batch get <id> --jq '.emails[] | select(.state == "deliverable") | .email'
 ```
 
 ## Account credits
@@ -114,7 +115,7 @@ around that — surface the final error instead.
 - Don't pass an API key on argv for everyday commands — it lands in
   shell history and `ps`. Use `EMAILABLE_API_KEY` or
   `emailable login`.
-- Don't poll `batch get` in a tight loop — use `--wait` or
-  `--stream`, which back off correctly server-side.
+- Don't poll `batch get` in a tight loop — use `--wait`, which
+  backs off correctly server-side.
 - Don't try to parse the human (non-`--json`) output — column widths,
   colors, and glyphs are for humans and aren't a stable interface.

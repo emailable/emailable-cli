@@ -88,37 +88,6 @@ func TestJQ_BadExpression(t *testing.T) {
 	}
 }
 
-func TestJQ_FiltersStreamEvents(t *testing.T) {
-	q := mustCompile(t, ".id")
-	var buf bytes.Buffer
-	s := &batchStreamer{f: &output.JSON{W: &buf, Compact: true, Query: q}}
-
-	if err := s.emitSubmitted("bch_x"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.emitProgress("bch_x", 1, 10); err != nil {
-		t.Fatal(err)
-	}
-	// Both events carry an id, so each yields the raw id on its own line.
-	if got := buf.String(); got != "bch_x\nbch_x\n" {
-		t.Errorf("got %q, want %q", got, "bch_x\nbch_x\n")
-	}
-}
-
-func TestJQ_StreamSkipsFilterErrors(t *testing.T) {
-	// .emails[] errors on a progress event (no emails); it must be skipped.
-	q := mustCompile(t, ".emails[]")
-	var buf bytes.Buffer
-	s := &batchStreamer{f: &output.JSON{W: &buf, Compact: true, Query: q}}
-
-	if err := s.emitProgress("bch_x", 1, 10); err != nil {
-		t.Fatalf("progress event should be skipped, not error: %v", err)
-	}
-	if buf.Len() != 0 {
-		t.Errorf("expected no output for a skipped event, got %q", buf.String())
-	}
-}
-
 func mustCompile(t *testing.T, expr string) *output.Query {
 	t.Helper()
 	q, err := output.CompileQuery(expr)
