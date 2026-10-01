@@ -312,7 +312,7 @@ func saveBatchToFile(cmd *cobra.Command, cctx *cmdCtx, status *api.BatchStatus, 
 		return saveDownloadToFile(cmd, cctx, status, path)
 	}
 	if _, total, ok := status.Progress(); ok && total > 0 && status.IsComplete() && len(status.Emails) == 0 {
-		return fmt.Errorf("batch %s has no per-email results to save; the API stops returning them some days after completion", batchID)
+		return fmt.Errorf("batch %s returned no per-email results to save", batchID)
 	}
 	return saveToFile(cmd, cctx, status, path)
 }
