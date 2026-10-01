@@ -324,15 +324,18 @@ func Execute() {
 		renderError(root.ErrOrStderr(), runErr, jsonOutput)
 		// After Ctrl-C the user wants out; don't hold the exit for the notice.
 		if skip == updater.SkipNone && sigCtx.Err() == nil {
-			waitAndNotify(root.ErrOrStderr(), resultCh, updCancel, updateNoticeWait)
+			waitAndNotify(sigCtx.Done(), root.ErrOrStderr(), resultCh, updCancel, updateNoticeWait)
 		}
 		os.Exit(exitCode(runErr))
 	}
 
-	if skip != updater.SkipNone {
+	// A command that finished despite Ctrl-C (e.g. login already saved the
+	// credentials) still exits 0, but the notice wait is skipped so the exit
+	// is immediate.
+	if skip != updater.SkipNone || sigCtx.Err() != nil {
 		return
 	}
-	waitAndNotify(root.ErrOrStderr(), resultCh, updCancel, updateNoticeWait)
+	waitAndNotify(sigCtx.Done(), root.ErrOrStderr(), resultCh, updCancel, updateNoticeWait)
 }
 
 // forceExitAfterInterrupt waits for a signal, then restores default signal
@@ -357,13 +360,17 @@ func forceExitAfterInterrupt(sigCtx context.Context, stop context.CancelFunc, fi
 // updateNoticeWait caps how long Execute blocks for the update check. 1s matches the spec.
 const updateNoticeWait = 1 * time.Second
 
-func waitAndNotify(w io.Writer, resultCh <-chan updater.Result, updCancel context.CancelFunc, wait time.Duration) {
+// waitAndNotify gives up early when interrupted closes, so Ctrl-C during the
+// wait exits at once.
+func waitAndNotify(interrupted <-chan struct{}, w io.Writer, resultCh <-chan updater.Result, updCancel context.CancelFunc, wait time.Duration) {
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case r := <-resultCh:
 		_ = updater.MaybeNotify(w, r, ui.IsTTY(w))
 	case <-timer.C:
+		updCancel()
+	case <-interrupted:
 		updCancel()
 	}
 }
