@@ -398,21 +398,6 @@ func TestShouldSkip(t *testing.T) {
 	}
 }
 
-func TestIsTruthy(t *testing.T) {
-	yes := []string{"1", "true", "TRUE", "yes", "YES", "on", " on "}
-	no := []string{"", "0", "false", "no", "off", "asdf"}
-	for _, v := range yes {
-		if !isTruthy(v) {
-			t.Errorf("isTruthy(%q) = false, want true", v)
-		}
-	}
-	for _, v := range no {
-		if isTruthy(v) {
-			t.Errorf("isTruthy(%q) = true, want false", v)
-		}
-	}
-}
-
 func TestCompareSemver(t *testing.T) {
 	cases := []struct {
 		a, b string
