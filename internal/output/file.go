@@ -1,10 +1,12 @@
 package output
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -203,21 +205,27 @@ func writeJSON(v any, path string) (int, error) {
 // csvHeaderFor returns CSVColumns followed by any other keys present in
 // rows, sorted by name.
 func csvHeaderFor(rows []record) []string {
+	extra := map[string]bool{}
+	for _, r := range rows {
+		for k := range r {
+			extra[k] = true
+		}
+	}
+	return csvHeaderWith(extra)
+}
+
+// csvHeaderWith returns CSVColumns followed by the keys of present that
+// aren't already among them, sorted by name.
+func csvHeaderWith(present map[string]bool) []string {
 	known := make(map[string]bool, len(CSVColumns))
 	for _, c := range CSVColumns {
 		known[c] = true
 	}
-	extra := map[string]bool{}
-	for _, r := range rows {
-		for k := range r {
-			if !known[k] {
-				extra[k] = true
-			}
+	names := make([]string, 0, len(present))
+	for k := range present {
+		if !known[k] {
+			names = append(names, k)
 		}
-	}
-	names := make([]string, 0, len(extra))
-	for k := range extra {
-		names = append(names, k)
 	}
 	sort.Strings(names)
 	header := append([]string(nil), CSVColumns...)
@@ -249,50 +257,100 @@ func csvCell(v any, present bool) string {
 	}
 }
 
-func encodeCSV(rows []record) ([]byte, error) {
-	header := csvHeaderFor(rows)
-	var buf bytes.Buffer
-	w := csv.NewWriter(&buf)
-	if err := w.Write(header); err != nil {
-		return nil, fmt.Errorf("write csv header: %w", err)
+// rowSource yields records one at a time, so a large download converts row
+// by row instead of being held in memory whole. ok=false ends the stream.
+type rowSource func() (rec record, ok bool, err error)
+
+func sliceRows(rows []record) rowSource {
+	i := 0
+	return func() (record, bool, error) {
+		if i >= len(rows) {
+			return nil, false, nil
+		}
+		i++
+		return rows[i-1], true, nil
 	}
-	rec := make([]string, len(header))
-	for _, r := range rows {
+}
+
+func encodeCSV(w io.Writer, header []string, next rowSource) (int, error) {
+	cw := csv.NewWriter(w)
+	if err := cw.Write(header); err != nil {
+		return 0, fmt.Errorf("write csv header: %w", err)
+	}
+	n := 0
+	line := make([]string, len(header))
+	for {
+		r, ok, err := next()
+		if err != nil {
+			return n, err
+		}
+		if !ok {
+			break
+		}
 		for i, col := range header {
-			v, ok := r[col]
-			rec[i] = csvCell(v, ok)
+			v, present := r[col]
+			line[i] = csvCell(v, present)
 		}
-		if err := w.Write(rec); err != nil {
-			return nil, fmt.Errorf("write csv row: %w", err)
+		if err := cw.Write(line); err != nil {
+			return n, fmt.Errorf("write csv row: %w", err)
 		}
+		n++
 	}
-	w.Flush()
-	if err := w.Error(); err != nil {
-		return nil, fmt.Errorf("flush csv: %w", err)
+	cw.Flush()
+	if err := cw.Error(); err != nil {
+		return n, fmt.Errorf("flush csv: %w", err)
 	}
-	return buf.Bytes(), nil
+	return n, nil
 }
 
 func writeCSV(rows []record, path string) (int, error) {
-	data, err := encodeCSV(rows)
+	return writeCSVRows(path, csvHeaderFor(rows), sliceRows(rows))
+}
+
+func writeCSVRows(path string, header []string, next rowSource) (int, error) {
+	var n int
+	err := atomicWriteWith(path, func(w io.Writer) error {
+		var err error
+		n, err = encodeCSV(w, header, next)
+		return err
+	})
 	if err != nil {
 		return 0, err
 	}
-	if err := atomicWrite(path, data); err != nil {
-		return 0, err
-	}
-	return len(rows), nil
+	return n, nil
 }
 
 func atomicWrite(path string, data []byte) error {
+	return atomicWriteWith(path, func(w io.Writer) error {
+		_, err := w.Write(data)
+		return err
+	})
+}
+
+// atomicWriteWith streams fill's output to a temp file beside path, then
+// renames it into place so a failed write never leaves a partial file.
+func atomicWriteWith(path string, fill func(io.Writer) error) error {
 	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("write %s: %w", tmp, err)
+	}
 	cleanup := true
 	defer func() {
 		if cleanup {
 			_ = os.Remove(tmp)
 		}
 	}()
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	bw := bufio.NewWriter(f)
+	if err := fill(bw); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := bw.Flush(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write %s: %w", tmp, err)
+	}
+	if err := f.Close(); err != nil {
 		return fmt.Errorf("write %s: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {

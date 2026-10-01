@@ -58,20 +58,15 @@ func WriteDownload(d *api.Download, batch *api.BatchStatus, opts SaveOptions) (i
 		return writeUnknownDownload(data, name, wantCSV, opts.Path)
 	}
 
-	rows, header, err := parseDownload(data, format)
+	if wantCSV && format == formatCSV {
+		return convertCSVDownload(data, opts.Path)
+	}
+
+	rows, err := parseDownload(data, format)
 	if err != nil {
 		return 0, err
 	}
-
 	if wantCSV {
-		if format == formatCSV && !hasKnownColumn(header) {
-			// Columns we don't recognize: keep the file exactly as served
-			// rather than emit a sheet of blank known columns.
-			if err := atomicWrite(opts.Path, data); err != nil {
-				return 0, err
-			}
-			return len(rows), nil
-		}
 		return writeCSV(rows, opts.Path)
 	}
 
@@ -155,24 +150,88 @@ func sniffFormat(data []byte, contentType string) string {
 	return formatCSV
 }
 
-func parseDownload(data []byte, format string) ([]record, []string, error) {
+// convertCSVDownload rewrites a downloaded CSV into the standard column
+// layout one row at a time, so even a 1M-row export is never held in memory
+// as parsed rows.
+func convertCSVDownload(data []byte, dest string) (int, error) {
+	r, header, err := downloadCSVReader(data)
+	if err != nil {
+		return 0, err
+	}
+	if !hasKnownColumn(header) {
+		// Columns we don't recognize: keep the file exactly as served rather
+		// than emit a sheet of blank known columns.
+		n := 0
+		for {
+			if _, err := r.Read(); err == io.EOF {
+				break
+			} else if err != nil {
+				return 0, fmt.Errorf("parse downloaded csv: %w", err)
+			}
+			n++
+		}
+		if err := atomicWrite(dest, data); err != nil {
+			return 0, err
+		}
+		return n, nil
+	}
+	present := make(map[string]bool, len(header))
+	for _, h := range header {
+		present[h] = true
+	}
+	return writeCSVRows(dest, csvHeaderWith(present), csvDownloadRows(r, header))
+}
+
+// parseDownload reads every result row, for JSON output where the whole
+// document has to be built anyway.
+func parseDownload(data []byte, format string) ([]record, error) {
 	data = bytes.TrimPrefix(data, utf8BOM)
 	if format == formatJSON {
-		rows, err := parseJSONDownload(data)
-		return rows, nil, err
+		return parseJSONDownload(data)
 	}
-	r := csv.NewReader(bytes.NewReader(data))
+	r, header, err := downloadCSVReader(data)
+	if err != nil {
+		return nil, err
+	}
+	next := csvDownloadRows(r, header)
+	rows := []record{}
+	for {
+		rec, ok, err := next()
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return rows, nil
+		}
+		rows = append(rows, rec)
+	}
+}
+
+// downloadCSVReader returns a reader positioned after the header row. An
+// empty file yields a nil header and a reader at EOF.
+func downloadCSVReader(data []byte) (*csv.Reader, []string, error) {
+	r := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(data, utf8BOM)))
 	r.FieldsPerRecord = -1
-	all, err := r.ReadAll()
+	r.ReuseRecord = true
+	header, err := r.Read()
+	if err == io.EOF {
+		return r, nil, nil
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse downloaded csv: %w", err)
 	}
-	if len(all) == 0 {
-		return []record{}, nil, nil
-	}
-	header := all[0]
-	rows := make([]record, 0, len(all)-1)
-	for _, line := range all[1:] {
+	return r, append([]string(nil), header...), nil
+}
+
+func csvDownloadRows(r *csv.Reader, header []string) rowSource {
+	return func() (record, bool, error) {
+		line, err := r.Read()
+		if err == io.EOF {
+			return nil, false, nil
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("parse downloaded csv: %w", err)
+		}
 		rec := make(record, len(header))
 		for i, col := range header {
 			if i < len(line) {
@@ -181,9 +240,8 @@ func parseDownload(data []byte, format string) ([]record, []string, error) {
 				rec[col] = nil
 			}
 		}
-		rows = append(rows, rec)
+		return rec, true, nil
 	}
-	return rows, header, nil
 }
 
 func parseJSONDownload(data []byte) ([]record, error) {
