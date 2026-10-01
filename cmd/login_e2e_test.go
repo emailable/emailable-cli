@@ -134,17 +134,17 @@ func TestLogin_APIKey_ClearsOAuth(t *testing.T) {
 }
 
 // TestApiKeyForLogin_FlagWins exercises the helper directly: when the flag
-// is set, stdin shouldn't be consulted.
+// holds a literal key, stdin shouldn't be consulted.
 func TestApiKeyForLogin_FlagWins(t *testing.T) {
-	prev := apiKey
-	apiKey = "  sk_flag  "
-	t.Cleanup(func() { apiKey = prev })
-
-	key, ok := apiKeyForLogin()
-	if !ok {
-		t.Fatal("expected ok=true")
+	stdin := strings.NewReader("sk_stdin")
+	key, err := apiKeyForLogin(stdin, "  sk_flag  ")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if key != "sk_flag" {
 		t.Errorf("expected trimmed key, got %q", key)
+	}
+	if stdin.Len() != len("sk_stdin") {
+		t.Errorf("stdin was read: %d bytes remain", stdin.Len())
 	}
 }

@@ -138,18 +138,23 @@ EMAILABLE_API_KEY=live_xxx... emailable account status
 ```
 
 **Saved** (preferred for personal machines): `emailable login` accepts an
-API key via stdin pipe or via the login-local `--api-key` flag. The key is
-validated against `/v1/account` before being written to
-`~/.config/emailable/credentials.json`, and supersedes any prior OAuth
-credentials.
+API key via the login-local `--api-key` flag. Pass `--api-key -` to read
+the key from stdin; without `--api-key`, `login` never reads stdin and
+always starts the OAuth flow. The key is validated against `/v1/account`
+before being written to `~/.config/emailable/credentials.json`, and
+supersedes any prior OAuth credentials.
 
 ```bash
 # Pipe from a password manager / secret store (key stays out of shell history)
-op read "op://Vault/Emailable/api-key" | emailable login
+op read "op://Vault/Emailable/api-key" | emailable login --api-key -
 
-# Or pass directly (lands in shell history — avoid for shared machines)
+# Or pass directly (lands in shell history, so avoid on shared machines)
 emailable login --api-key live_xxx...
 ```
+
+With `--json`, `login` prints `{"logged_in": true, "auth_source": ..., "owner_email": ...}`
+on stdout. During the OAuth flow the verification code and URL still go to
+stderr.
 
 After saving, every subsequent command uses the stored key with no env
 var or flag needed. Run `emailable logout` to remove it.
