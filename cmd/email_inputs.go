@@ -233,7 +233,8 @@ func extractJSONPath(top any, field, path string) ([]string, error) {
 	// `{"contacts":[...]}` with `--field email`: when the first segment isn't
 	// a top-level key, descend into the object's only array.
 	if obj, ok := top.(map[string]any); ok {
-		if _, ok := lookupKey(obj, segs[0]); !ok {
+		_, literal := lookupKey(obj, field)
+		if _, ok := lookupKey(obj, segs[0]); !ok && !literal {
 			if arr, ok := soleArray(obj); ok {
 				top = arr
 			}
@@ -260,6 +261,14 @@ func extractJSONPath(top any, field, path string) ([]string, error) {
 		obj, ok := v.(map[string]any)
 		if !ok {
 			return
+		}
+		// A key that literally contains dots (`"contact.email"`) wins over
+		// splitting it into a nested path.
+		if len(segs) > 1 {
+			if next, ok := lookupKey(obj, strings.Join(segs, ".")); ok {
+				walk(next, nil)
+				return
+			}
 		}
 		if next, ok := lookupKey(obj, segs[0]); ok {
 			walk(next, segs[1:])
@@ -325,17 +334,22 @@ func detectJSONEmails(top any, path string) ([]string, error) {
 }
 
 // lookupKey prefers an exact key match and falls back to a case-insensitive
-// one, so `email` also finds `Email`.
+// one, so `email` also finds `Email`. When several keys match ignoring case,
+// the first in sorted order wins so the result doesn't depend on map order.
 func lookupKey(obj map[string]any, key string) (any, bool) {
 	if v, ok := obj[key]; ok {
 		return v, true
 	}
-	for k, v := range obj {
-		if strings.EqualFold(k, key) {
-			return v, true
+	best, found := "", false
+	for k := range obj {
+		if strings.EqualFold(k, key) && (!found || k < best) {
+			best, found = k, true
 		}
 	}
-	return nil, false
+	if !found {
+		return nil, false
+	}
+	return obj[best], true
 }
 
 // soleArray returns the value of obj's only array-valued key, if it has

@@ -405,6 +405,9 @@ func TestCollectEmails_JSON(t *testing.T) {
 		{"path ending in string array", `[{"emails":["a@x.com","b@y.com"]},{"emails":["c@z.com"]}]`, "emails", []string{"a@x.com", "b@y.com", "c@z.com"}},
 		{"non-string leaves skipped", `[{"email":"a@x.com"},{"email":5},{"email":null}]`, "email", []string{"a@x.com"}},
 		{"array of strings ignores field", `["a@x.com"]`, "email", []string{"a@x.com"}},
+		{"literal dotted key", `[{"contact.email":"a@x.com"}]`, "contact.email", []string{"a@x.com"}},
+		{"wrapped literal dotted key", `{"rows":[{"contact.email":"a@x.com"}]}`, "contact.email", []string{"a@x.com"}},
+		{"case variants pick sorted first", `[{"Email":"a@x.com","EMAIL":"b@y.com"}]`, "", []string{"b@y.com"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
