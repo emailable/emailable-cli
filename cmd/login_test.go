@@ -4,24 +4,37 @@ import (
 	"bytes"
 	"io"
 	"net/http"
-	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/emailable/emailable-cli/internal/credentials"
 )
 
-// TestOpenBrowser_Unsupported verifies the helper returns an error for an
-// unknown GOOS. We can't usefully assert success on the current platform
-// without actually launching a browser, so we only cover the negative case.
-func TestOpenBrowser_Unsupported(t *testing.T) {
-	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" ||
-		runtime.GOOS == "windows" || runtime.GOOS == "freebsd" ||
-		runtime.GOOS == "openbsd" || runtime.GOOS == "netbsd" {
-		t.Skip("openBrowser supports this GOOS; nothing to assert for the unsupported branch")
+// TestBrowserCommand checks each platform's launcher and that the URL reaches
+// it as a single argument, including the Windows case where cmd.exe would
+// split on &.
+func TestBrowserCommand(t *testing.T) {
+	const url = "https://example.com/device?user_code=AB-CD&x=1"
+	cases := []struct {
+		goos string
+		want []string
+	}{
+		{"darwin", []string{"open", url}},
+		{"linux", []string{"xdg-open", url}},
+		{"windows", []string{"rundll32", "url.dll,FileProtocolHandler", url}},
 	}
-	if err := openBrowser("https://example.com"); err == nil {
-		t.Errorf("expected error on unsupported platform %q, got nil", runtime.GOOS)
+	for _, tc := range cases {
+		c, err := browserCommand(tc.goos, url)
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", tc.goos, err)
+		}
+		if !slices.Equal(c.Args, tc.want) {
+			t.Errorf("%s: args = %q, want %q", tc.goos, c.Args, tc.want)
+		}
+	}
+	if _, err := browserCommand("plan9", url); err == nil {
+		t.Error("expected error for unsupported platform")
 	}
 }
 
@@ -124,6 +137,24 @@ func TestLogin_APIKeyDash_EmptyStdin(t *testing.T) {
 	}
 	if creds.APIKey != "" {
 		t.Errorf("APIKey should not be saved, got %q", creds.APIKey)
+	}
+}
+
+// TestLogin_EmptyAPIKeyFlag: an explicit but empty --api-key (e.g. an unset
+// shell variable) is invalid input, not a silent switch to the browser flow.
+func TestLogin_EmptyAPIKeyFlag(t *testing.T) {
+	newTestEnv(t, http.HandlerFunc(oauthHandler))
+	opened := stubOpenBrowser(t)
+
+	res := runRootWithStdin(t, strings.NewReader(""), "login", "--api-key", " ")
+	if res.Err == nil {
+		t.Fatal("expected error for empty --api-key")
+	}
+	if got := errorCode(res.Err); got != codeInvalidInput {
+		t.Errorf("errorCode: got %q want %q", got, codeInvalidInput)
+	}
+	if *opened != "" {
+		t.Errorf("browser should not open, got %q", *opened)
 	}
 }
 

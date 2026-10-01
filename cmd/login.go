@@ -47,7 +47,9 @@ func runLoginE(cmd *cobra.Command, _ []string) error {
 
 	// EMAILABLE_API_KEY is not consulted here: it's for per-invocation use,
 	// and login is an explicit persistence action requiring --api-key.
-	if apiKey != "" {
+	// Changed, not a non-empty value: `--api-key "$UNSET_VAR"` must fail as
+	// invalid input rather than silently fall through to the browser flow.
+	if cmd.Flags().Changed("api-key") {
 		key, err := apiKeyForLogin(cmd.InOrStdin(), apiKey)
 		if err != nil {
 			return err
@@ -78,9 +80,9 @@ func runLoginE(cmd *cobra.Command, _ []string) error {
 	_ = hStderr.Notice(fmt.Sprintf("Verification code: `%s`", dc.UserCode))
 	_ = hStderr.Notice(fmt.Sprintf("If it doesn't open, visit `%s`", openURL))
 
-	// The spinner is human chrome; JSON callers get only the final object.
+	// The spinner is human chrome; JSON and quiet callers don't get it.
 	sp := ui.New("Waiting for authorization")
-	if !jsonOutput {
+	if !jsonOutput && !ctx.Quiet {
 		sp.Start()
 	}
 	tok, err := client.PollToken(cmd.Context(), dc)
@@ -139,7 +141,11 @@ var stdinIsTerminal = func(r io.Reader) bool {
 // an explicit `-`, so a pipe that never closes can't hang a plain `login`.
 func apiKeyForLogin(stdin io.Reader, flag string) (string, error) {
 	if flag != "-" {
-		return strings.TrimSpace(flag), nil
+		key := strings.TrimSpace(flag)
+		if key == "" {
+			return "", NewInvalidInput("--api-key is empty; pass a key, or `-` to read it from stdin")
+		}
+		return key, nil
 	}
 	if stdinIsTerminal(stdin) {
 		return "", NewInvalidInput("`--api-key -` reads the key from stdin, but stdin is a terminal; pipe the key in")
@@ -204,18 +210,26 @@ func loginWithAPIKey(cmd *cobra.Command, ctx *cmdCtx, key string) error {
 
 // openBrowser is a var so tests can stub it instead of launching a browser.
 var openBrowser = func(url string) error {
-	var c *exec.Cmd
-	switch runtime.GOOS {
+	c, err := browserCommand(runtime.GOOS, url)
+	if err != nil {
+		return err
+	}
+	return c.Start()
+}
+
+// browserCommand builds the command that opens url on goos, split out so
+// tests can check every platform's arguments without launching anything.
+func browserCommand(goos, url string) (*exec.Cmd, error) {
+	switch goos {
 	case "darwin":
-		c = exec.Command("open", url)
+		return exec.Command("open", url), nil
 	case "linux", "freebsd", "openbsd", "netbsd":
-		c = exec.Command("xdg-open", url)
+		return exec.Command("xdg-open", url), nil
 	case "windows":
 		// Not `cmd /c start`: cmd.exe splits an unquoted & in the URL into a
 		// second command. rundll32 receives the URL as a plain argument.
-		c = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url), nil
 	default:
-		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+		return nil, fmt.Errorf("unsupported platform: %s", goos)
 	}
-	return c.Start()
 }
