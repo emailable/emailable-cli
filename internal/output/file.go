@@ -1,10 +1,13 @@
 package output
 
 import (
+	"bytes"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -18,13 +21,20 @@ type SaveOptions struct {
 	Stderr    *os.File // nil means os.Stderr
 }
 
-// Duration and other floats are omitted — not useful in a spreadsheet.
-var csvHeader = []string{
-	"email", "state", "score", "reason", "domain",
-	"disposable", "accept_all", "role", "free",
-	"mx_record", "smtp_provider", "did_you_mean",
-	"first_name", "last_name", "gender",
+// CSVColumns is the fixed CSV column order: every documented field of the
+// verify response, identity first, then name parts, then flags and server
+// details. Keys outside this list are appended after it, sorted by name.
+var CSVColumns = []string{
+	"email", "state", "reason", "score", "domain", "user",
+	"first_name", "last_name", "full_name", "gender", "birth_year",
+	"free", "role", "disposable", "accept_all", "mailbox_full", "no_reply",
+	"did_you_mean", "mx_record", "smtp_provider", "tag", "duration",
 }
+
+// record is one verify result decoded from the API's JSON, so a key the API
+// omitted (e.g. via response_fields) or sent as null stays distinguishable
+// from a zero value.
+type record map[string]any
 
 // WriteResults writes v to opts.Path atomically and returns the row count.
 // Unknown extensions fall back to JSON with a stderr note.
@@ -32,30 +42,13 @@ func WriteResults(v any, opts SaveOptions) (int, error) {
 	if opts.Path == "" {
 		return 0, fmt.Errorf("output path is required")
 	}
-	stderr := opts.Stderr
-	if stderr == nil {
-		stderr = os.Stderr
-	}
-
-	ext := strings.ToLower(filepath.Ext(opts.Path))
-
-	useCSV := false
-	switch {
-	case opts.ForceJSON:
-		useCSV = false
-	case ext == ".csv":
-		useCSV = true
-	case ext == ".json":
-		useCSV = false
-	default:
-		fmt.Fprintln(stderr, "note: unrecognized extension; writing JSON")
-		useCSV = false
-	}
-
-	if useCSV {
-		rows, ok := flattenForCSV(v)
+	if useCSV(opts) {
+		rows, ok, err := recordsFor(v)
+		if err != nil {
+			return 0, err
+		}
 		if !ok {
-			fmt.Fprintln(stderr, "note: data shape not supported for CSV; writing JSON")
+			fmt.Fprintln(stderrFor(opts), "note: data shape not supported for CSV; writing JSON")
 			return writeJSON(v, opts.Path)
 		}
 		return writeCSV(rows, opts.Path)
@@ -63,27 +56,114 @@ func WriteResults(v any, opts SaveOptions) (int, error) {
 	return writeJSON(v, opts.Path)
 }
 
-func flattenForCSV(v any) ([]api.VerifyResult, bool) {
+func stderrFor(opts SaveOptions) *os.File {
+	if opts.Stderr != nil {
+		return opts.Stderr
+	}
+	return os.Stderr
+}
+
+func useCSV(opts SaveOptions) bool {
+	if opts.ForceJSON {
+		return false
+	}
+	switch strings.ToLower(filepath.Ext(opts.Path)) {
+	case ".csv":
+		return true
+	case ".json":
+		return false
+	default:
+		fmt.Fprintln(stderrFor(opts), "note: unrecognized extension; writing JSON")
+		return false
+	}
+}
+
+// recordsFor builds CSV rows from the raw API body when available, falling
+// back to re-encoding the typed struct for values built in code.
+func recordsFor(v any) ([]record, bool, error) {
 	switch t := v.(type) {
 	case *api.VerifyResult:
 		if t == nil {
-			return nil, true
+			return nil, true, nil
 		}
-		return []api.VerifyResult{*t}, true
+		r, err := verifyRecord(t)
+		if err != nil {
+			return nil, true, err
+		}
+		return []record{r}, true, nil
 	case api.VerifyResult:
-		return []api.VerifyResult{t}, true
+		return recordsFor(&t)
 	case *api.BatchStatus:
 		if t == nil {
-			return nil, true
+			return nil, true, nil
 		}
-		return t.Emails, true
+		rows, err := batchRecords(t)
+		return rows, true, err
 	case api.BatchStatus:
-		return t.Emails, true
+		return recordsFor(&t)
 	case []api.VerifyResult:
-		return t, true
+		rows := make([]record, 0, len(t))
+		for i := range t {
+			r, err := verifyRecord(&t[i])
+			if err != nil {
+				return nil, true, err
+			}
+			rows = append(rows, r)
+		}
+		return rows, true, nil
 	default:
-		return nil, false
+		return nil, false, nil
 	}
+}
+
+func verifyRecord(r *api.VerifyResult) (record, error) {
+	if raw := r.RawJSON(); len(raw) > 0 {
+		var rec record
+		if err := decodeNumbers(raw, &rec); err == nil && rec != nil {
+			return rec, nil
+		}
+	}
+	return typedRecord(r)
+}
+
+func batchRecords(b *api.BatchStatus) ([]record, error) {
+	if raw := b.RawJSON(); len(raw) > 0 {
+		var doc struct {
+			Emails []record `json:"emails"`
+		}
+		if err := decodeNumbers(raw, &doc); err == nil {
+			return doc.Emails, nil
+		}
+	}
+	rows := make([]record, 0, len(b.Emails))
+	for i := range b.Emails {
+		r, err := verifyRecord(&b.Emails[i])
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, r)
+	}
+	return rows, nil
+}
+
+func typedRecord(v any) (record, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("marshal result: %w", err)
+	}
+	var rec record
+	if err := decodeNumbers(b, &rec); err != nil {
+		return nil, fmt.Errorf("decode result: %w", err)
+	}
+	return rec, nil
+}
+
+// decodeNumbers keeps numbers as json.Number so scores and durations render
+// exactly as the API sent them.
+func decodeNumbers(data []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	return dec.Decode(v)
 }
 
 func resultCount(v any) int {
@@ -120,59 +200,87 @@ func writeJSON(v any, path string) (int, error) {
 	return resultCount(v), nil
 }
 
-func writeCSV(rows []api.VerifyResult, path string) (int, error) {
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return 0, fmt.Errorf("create %s: %w", tmp, err)
+// csvHeaderFor returns CSVColumns followed by any other keys present in
+// rows, sorted by name.
+func csvHeaderFor(rows []record) []string {
+	known := make(map[string]bool, len(CSVColumns))
+	for _, c := range CSVColumns {
+		known[c] = true
 	}
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmp)
-		}
-	}()
-
-	w := csv.NewWriter(f)
-	if err := w.Write(csvHeader); err != nil {
-		f.Close()
-		return 0, fmt.Errorf("write csv header: %w", err)
-	}
+	extra := map[string]bool{}
 	for _, r := range rows {
-		rec := []string{
-			r.Email,
-			r.State,
-			strconv.Itoa(r.Score),
-			r.Reason,
-			r.Domain,
-			strconv.FormatBool(r.Disposable),
-			strconv.FormatBool(r.AcceptAll),
-			strconv.FormatBool(r.Role),
-			strconv.FormatBool(r.Free),
-			r.MXRecord,
-			r.SMTPProvider,
-			r.DidYouMean,
-			r.FirstName,
-			r.LastName,
-			r.Gender,
+		for k := range r {
+			if !known[k] {
+				extra[k] = true
+			}
+		}
+	}
+	names := make([]string, 0, len(extra))
+	for k := range extra {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	header := append([]string(nil), CSVColumns...)
+	return append(header, names...)
+}
+
+// csvCell renders one value; absent and null are both blank.
+func csvCell(v any, present bool) string {
+	if !present || v == nil {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return t
+	case bool:
+		return strconv.FormatBool(t)
+	case json.Number:
+		return t.String()
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(t)
+	default:
+		b, err := json.Marshal(t)
+		if err != nil {
+			return fmt.Sprint(t)
+		}
+		return string(b)
+	}
+}
+
+func encodeCSV(rows []record) ([]byte, error) {
+	header := csvHeaderFor(rows)
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	if err := w.Write(header); err != nil {
+		return nil, fmt.Errorf("write csv header: %w", err)
+	}
+	rec := make([]string, len(header))
+	for _, r := range rows {
+		for i, col := range header {
+			v, ok := r[col]
+			rec[i] = csvCell(v, ok)
 		}
 		if err := w.Write(rec); err != nil {
-			f.Close()
-			return 0, fmt.Errorf("write csv row: %w", err)
+			return nil, fmt.Errorf("write csv row: %w", err)
 		}
 	}
 	w.Flush()
 	if err := w.Error(); err != nil {
-		f.Close()
-		return 0, fmt.Errorf("flush csv: %w", err)
+		return nil, fmt.Errorf("flush csv: %w", err)
 	}
-	if err := f.Close(); err != nil {
-		return 0, fmt.Errorf("close %s: %w", tmp, err)
+	return buf.Bytes(), nil
+}
+
+func writeCSV(rows []record, path string) (int, error) {
+	data, err := encodeCSV(rows)
+	if err != nil {
+		return 0, err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		return 0, fmt.Errorf("rename %s -> %s: %w", tmp, path, err)
+	if err := atomicWrite(path, data); err != nil {
+		return 0, err
 	}
-	cleanup = false
 	return len(rows), nil
 }
 

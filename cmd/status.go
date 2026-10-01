@@ -54,8 +54,8 @@ func runStatusE(cmd *cobra.Command, _ []string) error {
 		if cctx.ProjectConfigPath != "" {
 			payload["project_config_path"] = cctx.ProjectConfigPath
 		}
-		if source == "oauth" && cctx.Credentials.OwnerEmail != "" {
-			payload["owner_email"] = cctx.Credentials.OwnerEmail
+		if email := storedOwnerEmail(cctx, source); email != "" {
+			payload["owner_email"] = email
 		}
 		if expiresAt != "" {
 			payload["expires_at"] = expiresAt
@@ -77,6 +77,18 @@ func authSourceFor(cctx *cmdCtx) (source string, loggedIn bool) {
 	return string(apiKeySourceMissing), false
 }
 
+// storedOwnerEmail returns the email saved at login, but only when the active
+// credential is the stored one: a key from EMAILABLE_API_KEY may belong to a
+// different account than the one that logged in.
+func storedOwnerEmail(cctx *cmdCtx, source string) string {
+	switch apiKeySource(source) {
+	case apiKeySourceOAuth, apiKeySourceStored:
+		return cctx.Credentials.OwnerEmail
+	default:
+		return ""
+	}
+}
+
 func printStatusHuman(cmd *cobra.Command, cctx *cmdCtx, source string, loggedIn bool, expiresAt string, expiresIn int) error {
 	w := cmd.OutOrStdout()
 	stf := output.StylerFor(w)
@@ -96,8 +108,8 @@ func printStatusHuman(cmd *cobra.Command, cctx *cmdCtx, source string, loggedIn 
 		{"Status:", stateStyle.Render(stateText)},
 		{"Source:", value.Render(source)},
 	}
-	if source == "oauth" && cctx.Credentials.OwnerEmail != "" {
-		rows = append(rows, [2]string{"Account:", value.Render(cctx.Credentials.OwnerEmail)})
+	if email := storedOwnerEmail(cctx, source); email != "" {
+		rows = append(rows, [2]string{"Account:", value.Render(email)})
 	}
 	if expiresAt != "" {
 		expiry := expiresAt

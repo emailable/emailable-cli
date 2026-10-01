@@ -23,7 +23,7 @@ func newSkillCmd() *cobra.Command {
 			"writes SKILL.md to ~/.agents/skills/emailable and symlinks every " +
 			"detected agent (Claude Code, OpenCode, Codex) into that canonical " +
 			"copy, so one re-install picks up new releases everywhere.",
-		Args:         cobra.NoArgs,
+		Args:         unknownSubcommand,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if jsonOutput || quietMode || !terminalsInteractive(cmd) {
