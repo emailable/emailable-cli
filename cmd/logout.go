@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"github.com/emailable/emailable-cli/internal/credentials"
-	"github.com/emailable/emailable-cli/internal/oauth"
 	"github.com/emailable/emailable-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -26,7 +25,7 @@ func runLogoutE(cmd *cobra.Command, _ []string) error {
 	}
 
 	if ctx.Credentials.AccessToken != "" {
-		client := oauth.NewClient(ctx.Env.OAuthBaseURL, ctx.Env.ClientID, nil)
+		client := newOAuthClient(ctx.Env)
 		// Best-effort: server may be down, or token already invalidated.
 		_ = client.Revoke(cmd.Context(), ctx.Credentials.AccessToken)
 	}

@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/emailable/emailable-cli/internal/credentials"
 )
@@ -59,6 +61,10 @@ func newTestEnv(t *testing.T, handler http.Handler) *testEnv {
 	prevQuiet := quietMode
 	quietMode = false
 	t.Cleanup(func() { quietMode = prevQuiet })
+	// Skip real backoff and poll intervals so retry and --wait tests stay fast.
+	prevSleep := retrySleep
+	retrySleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+	t.Cleanup(func() { retrySleep = prevSleep })
 
 	// env.Current() returns "custom" when EMAILABLE_API_URL is set.
 	path, err := credentials.DefaultPath("custom")

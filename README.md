@@ -350,6 +350,7 @@ through verbatim.
 | `try_again`         | Verification is still processing (HTTP 249)      |
 | `server_error`      | Server-side failure (HTTP 5xx)                   |
 | `network`           | Connection / DNS / TLS failure                   |
+| `interrupted`       | Canceled by Ctrl-C or `SIGTERM`                  |
 | `unknown`           | Anything else                                    |
 
 #### Exit codes
@@ -362,6 +363,7 @@ through verbatim.
 | `3`  | Retry later (`rate_limited`, `try_again`)      |
 | `4`  | Invalid input or not found (`invalid_input`, `not_found`) |
 | `5`  | Network or server failure (`network`, `server_error`) |
+| `130` | Interrupted (`interrupted`)                   |
 
 #### Transient retry
 
@@ -369,7 +371,24 @@ The HTTP client automatically retries transient responses (up to twice by
 default). For `429`, it honors `RateLimit-Reset` for the backoff window
 (falling back to exponential when the header is absent or stale). For `249`,
 it retries briefly, then surfaces `try_again` with exit code `3` so scripts
-know no verification result was produced.
+know no verification result was produced. Read-only `GET` requests also
+retry `500`, `502`, `503`, `504`, and connection failures. Submitting a batch
+(`POST /batch`) never retries those, so a batch is never submitted twice.
+
+`--wait` keeps polling through temporary failures (network errors, `5xx`,
+`429`, `249`), backing off up to 30 seconds between polls, and gives up after
+8 consecutive failed polls (at least two minutes, longer when each poll's own
+retries are slow). Authentication and not-found
+errors stop it immediately. If `batch verify --wait` fails after the batch was
+submitted, the error includes the batch ID (a `batch_id` field in `--json`
+mode) so you can resume with `emailable batch get <id> --wait`:
+
+```json
+{"message": "dial tcp: connection refused", "code": "network", "batch_id": "5cfc..."}
+```
+
+When an OAuth access token is rejected with `401`, the CLI refreshes it once
+and retries the request.
 
 ### Debug logging
 

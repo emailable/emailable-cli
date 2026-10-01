@@ -522,3 +522,19 @@ func TestHTTPTimeout_IsShort(t *testing.T) {
 // errReader exists purely so we don't accidentally trip the linter for the
 // `errors` import on platforms where every other use happens to be elided.
 var _ = errors.New
+
+func TestCheck_SendsUserAgent(t *testing.T) {
+	var got string
+	withServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("User-Agent")
+		_, _ = w.Write([]byte(`{"tag_name":"v0.2.0"}`))
+	}))
+	orig := UserAgent
+	UserAgent = "emailable-cli/0.1.0 (linux; amd64)"
+	t.Cleanup(func() { UserAgent = orig })
+
+	Check(context.Background(), "0.1.0", t.TempDir())
+	if got != "emailable-cli/0.1.0 (linux; amd64)" {
+		t.Errorf("User-Agent: got %q", got)
+	}
+}

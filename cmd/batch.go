@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -135,7 +137,9 @@ func newBatchCmd() *cobra.Command {
 				}
 				final, err := waitForCompletion(cmd.Context(), client, submit.ID, cctx.JSONMode || cctx.Quiet, cmd.ErrOrStderr())
 				if err != nil {
-					return err
+					// Credits are already spent; keep the id attached so the
+					// caller can still fetch results with `batch get`.
+					return &batchWaitError{ID: submit.ID, Err: err}
 				}
 				return renderBatchOutcome(cmd, cctx, final, submit.ID, outPath, showAll)
 			}
@@ -201,6 +205,50 @@ const (
 	fastPollWindow   = 10 * time.Second
 )
 
+// A long --wait shouldn't die on one network blip. Temporary poll failures back
+// off from pollFailureBackoff, doubling up to pollFailureMaxBackoff, and we give
+// up after maxPollFailures in a row. The outer delays alone are 2+4+8+16+30+30+30s,
+// about two minutes, and each failed poll also spends the API client's own
+// per-request retries, so the real bound is longer.
+const (
+	maxPollFailures       = 8
+	pollFailureBackoff    = 2 * time.Second
+	pollFailureMaxBackoff = 30 * time.Second
+)
+
+// batchWaitError carries the id of a submitted batch whose --wait failed, so
+// the error output still tells the caller which batch to fetch.
+type batchWaitError struct {
+	ID  string
+	Err error
+}
+
+func (e *batchWaitError) Error() string { return e.Err.Error() }
+
+func (e *batchWaitError) Unwrap() error { return e.Err }
+
+// isTemporaryPollError reports whether a failed poll is worth repeating:
+// network errors, 5xx, 429, and 249. Auth, not-found, and other 4xx are final.
+func isTemporaryPollError(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var apiErr *api.Error
+	if errors.As(err, &apiErr) {
+		s := apiErr.StatusCode
+		return s == 249 || s == http.StatusTooManyRequests || s >= 500
+	}
+	return isNetworkError(err)
+}
+
+func pollFailureDelay(failures int) time.Duration {
+	d := pollFailureBackoff << (failures - 1)
+	if d <= 0 || d > pollFailureMaxBackoff {
+		d = pollFailureMaxBackoff
+	}
+	return d
+}
+
 // waitForCompletion polls until completion. Progress goes to stderr so piped stdout stays clean.
 func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonMode bool, progressOut io.Writer) (*api.BatchStatus, error) {
 	if progressOut == nil {
@@ -213,20 +261,38 @@ func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonM
 		lastTotal int
 	)
 	start := time.Now()
+	failures := 0
 
 	queueSpinner := ui.NewTo(progressOut, "Queued")
 	if uiEnabled {
 		queueSpinner.Start()
 	}
+	stopUI := func() {
+		queueSpinner.Stop()
+		if bar != nil {
+			bar.Stop()
+		}
+	}
 
+poll:
 	for {
 		// partial=false: stays in "processing" shape until the whole batch finishes,
 		// giving reliable counts. partial=true would signal done as soon as any result
 		// is ready, catching the batch mid-run.
 		s, err := client.Batch(ctx, id, false)
 		if err != nil {
-			return nil, err
+			failures++
+			if !isTemporaryPollError(err) || failures >= maxPollFailures {
+				stopUI()
+				return nil, err
+			}
+			if serr := retrySleep(ctx, pollFailureDelay(failures)); serr != nil {
+				stopUI()
+				return nil, serr
+			}
+			continue
 		}
+		failures = 0
 
 		if uiEnabled && s.Total > 0 {
 			if bar == nil || s.Total != lastTotal {
@@ -245,14 +311,25 @@ func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonM
 			// Counts-match completion can race with the API switching to the
 			// "completed" payload; retry briefly to get the canonical shape with Emails.
 			for i := 0; i < 3 && s.Total > 0 && len(s.Emails) == 0; i++ {
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				case <-time.After(500 * time.Millisecond):
+				if err := retrySleep(ctx, 500*time.Millisecond); err != nil {
+					stopUI()
+					return nil, err
 				}
 				next, nerr := client.Batch(ctx, id, false)
 				if nerr != nil {
-					break
+					// Same failure budget as the main poll: a temporary error
+					// goes back around rather than returning the count-only
+					// shape as if it were the final result.
+					failures++
+					if !isTemporaryPollError(nerr) || failures >= maxPollFailures {
+						stopUI()
+						return nil, nerr
+					}
+					if serr := retrySleep(ctx, pollFailureDelay(failures)); serr != nil {
+						stopUI()
+						return nil, serr
+					}
+					continue poll
 				}
 				s = next
 			}
@@ -267,10 +344,9 @@ func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonM
 		if time.Since(start) < fastPollWindow {
 			interval = fastPollInterval
 		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(interval):
+		if err := retrySleep(ctx, interval); err != nil {
+			stopUI()
+			return nil, err
 		}
 	}
 }

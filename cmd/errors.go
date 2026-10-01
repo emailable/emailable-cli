@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/emailable/emailable-cli/internal/api"
+	"github.com/emailable/emailable-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -46,6 +48,8 @@ const (
 	exitRateLimit = 3 // rate_limited
 	exitInput     = 4 // invalid_input, not_found
 	exitNetwork   = 5 // network, server_error
+
+	exitInterrupted = 130 // interrupted (SIGINT/SIGTERM), the shell convention for Ctrl-C
 )
 
 const (
@@ -57,12 +61,18 @@ const (
 	codeTryAgain         = "try_again"
 	codeServerError      = "server_error"
 	codeNetwork          = "network"
+	codeInterrupted      = "interrupted"
 	codeUnknown          = "unknown"
 )
 
 func errorCode(err error) string {
 	if err == nil {
 		return ""
+	}
+	// Only a signal cancels the root context, so a canceled request is an
+	// interrupt, not a network failure.
+	if errors.Is(err, context.Canceled) {
+		return codeInterrupted
 	}
 	if errors.Is(err, errNotAuthenticated) || errors.Is(err, api.ErrUnauthenticated) {
 		return codeNotAuthenticated
@@ -109,6 +119,8 @@ func exitCode(err error) int {
 		return exitInput
 	case codeNetwork, codeServerError:
 		return exitNetwork
+	case codeInterrupted:
+		return exitInterrupted
 	default:
 		return exitGeneric
 	}
@@ -136,6 +148,12 @@ func renderError(w io.Writer, err error, jsonMode bool) {
 		return
 	}
 	renderHumanError(w, err)
+	var bwe *batchWaitError
+	if errors.As(err, &bwe) {
+		// Not quiet-aware: like the error line itself, this must always print.
+		h := &output.Human{W: w}
+		_ = h.Hint(fmt.Sprintf("Batch `%s` was submitted. Run `emailable batch get %s --wait` to fetch its results.", bwe.ID, bwe.ID))
+	}
 }
 
 func renderHumanError(w io.Writer, err error) {
@@ -156,6 +174,10 @@ func renderHumanError(w io.Writer, err error) {
 			}
 		}
 		fmt.Fprintln(w, line)
+		return
+	}
+	if errors.Is(err, context.Canceled) {
+		fmt.Fprintln(w, "Error: interrupted")
 		return
 	}
 	fmt.Fprintf(w, "Error: %s\n", err.Error())
@@ -184,7 +206,7 @@ func renderJSONError(w io.Writer, err error) {
 			if _, hasCode := obj["code"]; !hasCode && code != "" {
 				obj["code"] = code
 			}
-			writeJSONLine(w, obj)
+			writeJSONLine(w, withBatchID(obj, err))
 			return
 		}
 		msg := apiErr.Message
@@ -199,13 +221,27 @@ func renderJSONError(w io.Writer, err error) {
 		if apiErr.RateLimit != nil {
 			payload["rate_limit"] = rateLimitMap(apiErr.RateLimit)
 		}
-		writeJSONLine(w, payload)
+		writeJSONLine(w, withBatchID(payload, err))
 		return
 	}
-	writeJSONLine(w, map[string]any{
-		"message": err.Error(),
+	msg := err.Error()
+	if code == codeInterrupted {
+		msg = "interrupted"
+	}
+	writeJSONLine(w, withBatchID(map[string]any{
+		"message": msg,
 		"code":    code,
-	})
+	}, err))
+}
+
+// withBatchID adds "batch_id" when err belongs to a submitted batch, so a
+// failed `--wait` in JSON mode still reports which batch to fetch.
+func withBatchID(obj map[string]any, err error) map[string]any {
+	var bwe *batchWaitError
+	if errors.As(err, &bwe) {
+		obj["batch_id"] = bwe.ID
+	}
+	return obj
 }
 
 func apiBodyAsObject(e *api.Error) (map[string]any, bool) {
