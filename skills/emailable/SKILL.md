@@ -42,9 +42,11 @@ Parse the response by reading `state` (`deliverable`, `undeliverable`,
 ## Batch verification
 
 Each positional arg can be a literal address, a CSV/JSON file
-(the email column defaults to `email`; override with `--field <name>`),
-or a plain-text file with one address per line. Pass `-` to read
-newline-separated addresses from stdin.
+(the email column defaults to `email`; override with `--field <name>`,
+which for JSON is a dotted path like `contacts.email` that traverses
+arrays), or a plain-text file with one address per line. Pass `-` to
+read newline-separated addresses from stdin. Addresses are deduplicated
+case-insensitively.
 
 ```bash
 emailable batch verify emails.csv --field email --wait --json

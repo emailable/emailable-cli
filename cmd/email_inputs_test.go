@@ -285,3 +285,162 @@ func TestLooksLikeBatchInput(t *testing.T) {
 		}
 	}
 }
+
+const bom = "\xef\xbb\xbf"
+
+func TestCollectEmails_DedupeCaseInsensitive(t *testing.T) {
+	got, err := collectEmails([]string{"A@x.com", "a@x.com", "a@X.COM"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"A@x.com"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+// Excel prefixes CSV exports with a BOM, which would otherwise glue onto the
+// `email` header and fail the column match.
+func TestCollectEmails_CSVWithBOM(t *testing.T) {
+	p := writeTemp(t, "in.csv", bom+"email,name\na@x.com,Alice\n")
+	got, err := collectEmails([]string{p}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a@x.com"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+func TestCollectEmails_JSONWithBOM(t *testing.T) {
+	p := writeTemp(t, "in.json", bom+`["a@x.com"]`)
+	got, err := collectEmails([]string{p}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a@x.com"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+func TestCollectEmails_TXTWithBOM(t *testing.T) {
+	p := writeTemp(t, "in.txt", bom+"a@x.com\nb@y.com\n")
+	got, err := collectEmails([]string{p}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a@x.com", "b@y.com"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+func TestCollectEmails_StdinWithBOM(t *testing.T) {
+	withStdinSource(t, bom+"a@x.com\n", true)
+	got, err := collectEmails([]string{"-"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a@x.com"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+// A one-column CSV whose first row is an address has no header, so that row
+// must not be dropped.
+func TestCollectEmails_CSVHeaderless(t *testing.T) {
+	p := writeTemp(t, "in.csv", "a@x.com\nb@y.com\n")
+	got, err := collectEmails([]string{p}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a@x.com", "b@y.com"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+// With --field, row 1 is always a header even if it looks like an address.
+func TestCollectEmails_CSVFieldAlwaysHeader(t *testing.T) {
+	p := writeTemp(t, "in.csv", "a@x.com\nb@y.com\n")
+	got, err := collectEmails([]string{p}, "a@x.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"b@y.com"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+func TestCollectEmails_CSVRaggedRows(t *testing.T) {
+	p := writeTemp(t, "in.csv", "name,email\nAlice,a@x.com,extra\nBob\nCarol,c@z.com\n")
+	got, err := collectEmails([]string{p}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a@x.com", "c@z.com"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+func TestCollectEmails_JSON(t *testing.T) {
+	cases := []struct {
+		name  string
+		body  string
+		field string
+		want  []string
+	}{
+		{"array of objects auto", `[{"Email":"a@x.com"},{"email":"b@y.com"}]`, "", []string{"a@x.com", "b@y.com"}},
+		{"wrapped strings auto", `{"emails":["a@x.com"],"count":1}`, "", []string{"a@x.com"}},
+		{"wrapped objects auto", `{"contacts":[{"email":"a@x.com"}]}`, "", []string{"a@x.com"}},
+		{"wrapped objects single segment", `{"contacts":[{"email":"a@x.com"}]}`, "email", []string{"a@x.com"}},
+		{"dotted path", `{"contacts":[{"email":"a@x.com"}],"tags":["x"]}`, "contacts.email", []string{"a@x.com"}},
+		{"wrapper key to strings", `{"contacts":["a@x.com"],"tags":["x"]}`, "contacts", []string{"a@x.com"}},
+		{"nested path", `{"data":{"users":[{"profile":{"email":"a@x.com"}},{"profile":{"email":"b@y.com"}}]}}`, "data.users.profile.email", []string{"a@x.com", "b@y.com"}},
+		{"path ending in string array", `[{"emails":["a@x.com","b@y.com"]},{"emails":["c@z.com"]}]`, "emails", []string{"a@x.com", "b@y.com", "c@z.com"}},
+		{"non-string leaves skipped", `[{"email":"a@x.com"},{"email":5},{"email":null}]`, "email", []string{"a@x.com"}},
+		{"array of strings ignores field", `["a@x.com"]`, "email", []string{"a@x.com"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeTemp(t, "in.json", tc.body)
+			got, err := collectEmails([]string{p}, tc.field)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got %v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCollectEmails_JSONErrors(t *testing.T) {
+	cases := []struct {
+		name  string
+		body  string
+		field string
+		want  string
+	}{
+		{"multiple arrays", `{"a":["a@x.com"],"b":["b@y.com"]}`, "", "--field <path>"},
+		{"no email key", `[{"address":"a@x.com"}]`, "", "--field <path>"},
+		{"missing path", `{"contacts":[{"email":"a@x.com"}],"tags":["x"]}`, "contacts.mail", `field "contacts.mail" not found`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeTemp(t, "in.json", tc.body)
+			_, err := collectEmails([]string{p}, tc.field)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
