@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -93,6 +94,33 @@ func TestRequireAuth_InvalidGrantAdoptsWinnersToken(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&refreshes); n != 1 {
 		t.Errorf("expected 1 refresh attempt, got %d", n)
+	}
+}
+
+// TestRequireAuth_InvalidGrantCorruptFileReportsReadError: a credentials file
+// that can't be parsed on reload surfaces its own error, not "not logged in".
+func TestRequireAuth_InvalidGrantCorruptFileReportsReadError(t *testing.T) {
+	tEnv := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeInvalidGrant(w)
+	}))
+	c := seedOAuth(t, tEnv, &credentials.Credentials{
+		AccessToken:  "old_at",
+		RefreshToken: "old_rt",
+		ExpiresAt:    time.Now().Add(-time.Hour),
+	})
+	if err := os.WriteFile(tEnv.CredentialsPath, []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("corrupt credentials: %v", err)
+	}
+
+	_, err := c.requireAuth(context.Background())
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if errors.Is(err, errNotAuthenticated) {
+		t.Errorf("expected the parse error, got errNotAuthenticated")
+	}
+	if !strings.Contains(err.Error(), "credentials: parse") {
+		t.Errorf("expected a credentials parse error, got %v", err)
 	}
 }
 

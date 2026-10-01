@@ -182,8 +182,13 @@ func (c *cmdCtx) refreshOrReload(ctx context.Context) error {
 		return err
 	}
 
+	// A missing or empty file loads as empty credentials (not logged in); a
+	// read or parse failure is reported as itself so it can be fixed.
 	saved, lerr := credentials.Load(c.CredentialsPath)
-	if lerr != nil || saved.AccessToken == "" {
+	if lerr != nil {
+		return lerr
+	}
+	if saved.AccessToken == "" {
 		return errNotAuthenticated
 	}
 	newAccess := saved.AccessToken != usedAccess
