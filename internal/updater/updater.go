@@ -206,14 +206,6 @@ func ShouldSkip(c Conditions) SkipReason {
 	return SkipNone
 }
 
-func isTruthy(v string) bool {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "1", "true", "yes", "on":
-		return true
-	}
-	return false
-}
-
 // FormatNotice returns a human-readable update notice for r, or an empty string if no update is available.
 func FormatNotice(r Result, tty bool) string {
 	if !r.UpdateAvailable || r.CurrentVersion == "" || r.LatestVersion == "" {
