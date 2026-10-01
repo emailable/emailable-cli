@@ -207,8 +207,9 @@ const (
 
 // A long --wait shouldn't die on one network blip. Temporary poll failures back
 // off from pollFailureBackoff, doubling up to pollFailureMaxBackoff, and we give
-// up after maxPollFailures in a row: 2+4+8+16+30+30+30s, about two minutes of
-// sustained failure (plus the API client's own per-request retries).
+// up after maxPollFailures in a row. The outer delays alone are 2+4+8+16+30+30+30s,
+// about two minutes, and each failed poll also spends the API client's own
+// per-request retries, so the real bound is longer.
 const (
 	maxPollFailures       = 8
 	pollFailureBackoff    = 2 * time.Second

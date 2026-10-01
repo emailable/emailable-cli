@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -396,5 +397,27 @@ func TestRenderError_Interrupted(t *testing.T) {
 	payload := decodeJSON(t, js.Bytes())
 	if payload["code"] != codeInterrupted || payload["message"] != "interrupted" {
 		t.Errorf("json: got %v", payload)
+	}
+}
+
+// TestBodyReadFailure_IsNetworkError: a connection dropped after the headers
+// (short body) must classify as network, or `--wait` would treat it as final.
+func TestBodyReadFailure_IsNetworkError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		_, _ = w.Write([]byte(`{"id":`))
+	}))
+	defer srv.Close()
+
+	c := api.NewWithOptions(srv.URL, "tok", api.Options{MaxRetries: -1})
+	_, err := c.Batch(context.Background(), "bch_1", false)
+	if err == nil {
+		t.Fatal("expected a body read error")
+	}
+	if got := errorCode(err); got != codeNetwork {
+		t.Errorf("errorCode: got %q want %q (err: %v)", got, codeNetwork, err)
+	}
+	if !isTemporaryPollError(err) {
+		t.Error("expected a mid-body drop to be a temporary poll error")
 	}
 }

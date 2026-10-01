@@ -377,7 +377,8 @@ retry `500`, `502`, `503`, `504`, and connection failures. Submitting a batch
 
 `--wait` keeps polling through temporary failures (network errors, `5xx`,
 `429`, `249`), backing off up to 30 seconds between polls, and gives up after
-about two minutes of consecutive failures. Authentication and not-found
+8 consecutive failed polls (at least two minutes, longer when each poll's own
+retries are slow). Authentication and not-found
 errors stop it immediately. If `batch verify --wait` fails after the batch was
 submitted, the error includes the batch ID (a `batch_id` field in `--json`
 mode) so you can resume with `emailable batch get <id> --wait`:

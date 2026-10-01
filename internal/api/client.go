@@ -210,7 +210,9 @@ func (c *Client) roundTrip(req *http.Request) ([]byte, *http.Response, error) {
 	body, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if err != nil {
-		return nil, nil, fmt.Errorf("read response: %w", err)
+		// Wrapped as *url.Error like a failed Do, so a connection dropped
+		// mid-body still classifies as a network failure.
+		return nil, nil, fmt.Errorf("read response: %w", &url.Error{Op: req.Method, URL: req.URL.String(), Err: err})
 	}
 	return body, resp, nil
 }
