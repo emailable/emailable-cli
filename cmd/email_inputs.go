@@ -42,8 +42,8 @@ func collectEmails(inputs []string, field string) ([]string, error) {
 		if email == "" {
 			return
 		}
-		// Dedupe case-insensitively since every duplicate costs a credit;
-		// the first spelling seen is the one submitted.
+		// Dedupe case-insensitively to match the server, which lowercases
+		// addresses. The first spelling seen is the one submitted.
 		key := strings.ToLower(email)
 		if _, ok := seen[key]; ok {
 			return

@@ -192,21 +192,10 @@ parameter; omitted flags use the server's default):
 ### Batch Verification
 
 Submit a batch verification job. Each input is either a literal email address,
-a CSV or JSON file, or a plain-text file with one address per line. A leading
-UTF-8 byte order mark (as written by Excel) is ignored, and addresses are
-deduplicated case-insensitively, keeping the first spelling seen.
-
-For CSV inputs, the email column must be named `email` (case-insensitive);
-otherwise pass `--field <name>` to point at the right one. A single-column CSV
-whose first row is an address is read as headerless; with `--field`, the first
-row is always the header.
-
-For JSON inputs, the CLI reads an array of strings, an array of objects with an
-`email` key (case-insensitive), or an object with exactly one array field
-holding either of those. For anything else, pass `--field` a dotted path such as
-`contacts.email`. Arrays along the path are traversed automatically, so
-`contacts.email` reads every `email` in `{"contacts":[{"email":"..."}]}`, and
-non-string values are skipped.
+a CSV or JSON file, or a plain-text file with one address per line. For CSV
+and JSON inputs, the email column/key must be named `email` (case-insensitive);
+otherwise pass `--field <name>`, or a dotted path like `contacts.email` for
+nested JSON.
 
 #### Start a batch
 
