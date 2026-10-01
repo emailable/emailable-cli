@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/emailable/emailable-cli/internal/api"
@@ -113,18 +114,51 @@ func (c *cmdCtx) requireAuth(ctx context.Context) (*api.Client, error) {
 		return nil, errNotAuthenticated
 	}
 	if c.needsRefresh() {
-		if err := c.refresh(ctx); err != nil {
-			if errors.Is(err, oauth.ErrInvalidGrant) {
-				return nil, errNotAuthenticated
-			}
+		if err := c.refreshOrReload(ctx); err != nil {
 			return nil, err
 		}
 	}
-	return api.NewWithOptions(c.Env.APIBaseURL, c.Credentials.AccessToken, c.clientOptions()), nil
+	opts := c.clientOptions()
+	if c.Credentials.RefreshToken != "" {
+		// The token can be revoked or rotated before ExpiresAt (e.g. by a
+		// parallel invocation), so a 401 gets one refresh-and-retry.
+		opts.OnUnauthorized = func(ctx context.Context) (string, error) {
+			if err := c.refreshOrReload(ctx); err != nil {
+				return "", err
+			}
+			return c.Credentials.AccessToken, nil
+		}
+	}
+	return api.NewWithOptions(c.Env.APIBaseURL, c.Credentials.AccessToken, opts), nil
+}
+
+// retrySleep waits between API retries and `--wait` polls; a var so tests
+// can skip the real backoff.
+var retrySleep = func(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (c *cmdCtx) clientOptions() api.Options {
-	return api.Options{Debug: debugEnabled()}
+	return api.Options{Debug: debugEnabled(), UserAgent: userAgent(), Sleep: retrySleep}
+}
+
+// userAgent identifies the CLI on every outbound request, e.g.
+// "emailable-cli/1.2.3 (darwin; arm64)".
+func userAgent() string {
+	return fmt.Sprintf("emailable-cli/%s (%s; %s)", collectVersionInfo().Version, runtime.GOOS, runtime.GOARCH)
+}
+
+func newOAuthClient(e *env.Environment) *oauth.Client {
+	oc := oauth.NewClient(e.OAuthBaseURL, e.ClientID, nil)
+	oc.UserAgent = userAgent()
+	return oc
 }
 
 func (c *cmdCtx) needsRefresh() bool {
@@ -136,8 +170,45 @@ func (c *cmdCtx) needsRefresh() bool {
 	return time.Now().Add(refreshSkew).After(c.Credentials.ExpiresAt)
 }
 
+// refreshOrReload refreshes the access token, tolerating a parallel CLI
+// invocation that refreshed first. Refresh tokens rotate, so the loser of that
+// race gets invalid_grant even though the winner saved valid tokens; on
+// invalid_grant we re-read the credentials file and adopt whatever it now
+// holds. Returns errNotAuthenticated when no usable tokens remain.
+func (c *cmdCtx) refreshOrReload(ctx context.Context) error {
+	usedAccess, usedRefresh := c.Credentials.AccessToken, c.Credentials.RefreshToken
+	err := c.refresh(ctx)
+	if !errors.Is(err, oauth.ErrInvalidGrant) {
+		return err
+	}
+
+	saved, lerr := credentials.Load(c.CredentialsPath)
+	if lerr != nil || saved.AccessToken == "" {
+		return errNotAuthenticated
+	}
+	newAccess := saved.AccessToken != usedAccess
+	newRefresh := saved.RefreshToken != "" && saved.RefreshToken != usedRefresh
+	if !newAccess && !newRefresh {
+		return errNotAuthenticated
+	}
+	c.Credentials = saved
+	if newAccess && !c.needsRefresh() {
+		return nil
+	}
+	if !newRefresh {
+		return errNotAuthenticated
+	}
+	if err := c.refresh(ctx); err != nil {
+		if errors.Is(err, oauth.ErrInvalidGrant) {
+			return errNotAuthenticated
+		}
+		return err
+	}
+	return nil
+}
+
 func (c *cmdCtx) refresh(ctx context.Context) error {
-	oc := oauth.NewClient(c.Env.OAuthBaseURL, c.Env.ClientID, nil)
+	oc := newOAuthClient(c.Env)
 	tok, err := oc.Refresh(ctx, c.Credentials.RefreshToken)
 	if err != nil {
 		return err

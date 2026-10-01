@@ -185,7 +185,7 @@ func TestVerify_NoRateLimitHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "tok", nil)
+	c := NewWithOptions(srv.URL, "tok", Options{MaxRetries: -1})
 	_, err := c.Verify(context.Background(), "foo@bar.com", nil)
 	if err == nil {
 		t.Fatal("expected error")

@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"regexp"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/emailable/emailable-cli/internal/env"
@@ -271,9 +273,22 @@ func resetRootFlagState() {
 	quietMode = false
 }
 
+// interruptGrace bounds how long a command may take to unwind after Ctrl-C
+// before Execute force-exits, so a read blocked on stdin can't hang the process.
+const interruptGrace = 3 * time.Second
+
 // Execute runs the root command.
 func Execute() {
+	updater.UserAgent = userAgent()
 	root := newRootCmd(version)
+
+	// Ctrl-C / SIGTERM cancel cmd.Context() so in-flight requests and --wait
+	// polls unwind through the normal error path (and report a batch id).
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	finished := make(chan struct{})
+	defer close(finished)
+	go forceExitAfterInterrupt(sigCtx, stop, finished)
 
 	// Uses IsTerminal (not IsTTY) so NO_COLOR doesn't suppress update checks.
 	preSkip := updater.ShouldSkip(updater.Conditions{
@@ -292,7 +307,7 @@ func Execute() {
 		}()
 	}
 
-	runErr := root.Execute()
+	runErr := root.ExecuteContext(sigCtx)
 
 	skip := preSkip
 	if skip == updater.SkipNone {
@@ -307,7 +322,8 @@ func Execute() {
 
 	if runErr != nil {
 		renderError(root.ErrOrStderr(), runErr, jsonOutput)
-		if skip == updater.SkipNone {
+		// After Ctrl-C the user wants out; don't hold the exit for the notice.
+		if skip == updater.SkipNone && sigCtx.Err() == nil {
 			waitAndNotify(root.ErrOrStderr(), resultCh, updCancel, updateNoticeWait)
 		}
 		os.Exit(exitCode(runErr))
@@ -317,6 +333,25 @@ func Execute() {
 		return
 	}
 	waitAndNotify(root.ErrOrStderr(), resultCh, updCancel, updateNoticeWait)
+}
+
+// forceExitAfterInterrupt waits for a signal, then restores default signal
+// handling (so a second Ctrl-C kills immediately) and exits 130 if the command
+// hasn't finished within interruptGrace.
+func forceExitAfterInterrupt(sigCtx context.Context, stop context.CancelFunc, finished <-chan struct{}) {
+	select {
+	case <-finished:
+		return
+	case <-sigCtx.Done():
+	}
+	stop()
+	timer := time.NewTimer(interruptGrace)
+	defer timer.Stop()
+	select {
+	case <-finished:
+	case <-timer.C:
+		os.Exit(exitInterrupted)
+	}
 }
 
 // updateNoticeWait caps how long Execute blocks for the update check. 1s matches the spec.

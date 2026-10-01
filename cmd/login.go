@@ -51,7 +51,7 @@ func runLoginE(cmd *cobra.Command, _ []string) error {
 		return loginWithAPIKey(cmd, ctx, key)
 	}
 
-	client := oauth.NewClient(ctx.Env.OAuthBaseURL, ctx.Env.ClientID, nil)
+	client := newOAuthClient(ctx.Env)
 
 	dc, err := client.RequestDeviceCode(cmd.Context())
 	if err != nil {
@@ -101,7 +101,7 @@ func runLoginE(cmd *cobra.Command, _ []string) error {
 
 	// Best-effort: token is already on disk, so an account fetch failure only
 	// degrades the success message, it doesn't undo the login.
-	apiClient := api.New(ctx.Env.APIBaseURL, creds.AccessToken, nil)
+	apiClient := api.NewWithOptions(ctx.Env.APIBaseURL, creds.AccessToken, ctx.clientOptions())
 	acc, accErr := apiClient.Account(cmd.Context())
 	h := &output.Human{W: cmd.OutOrStdout(), Quiet: ctx.Quiet}
 	if accErr == nil && acc != nil {
@@ -134,7 +134,7 @@ func apiKeyForLogin() (string, bool) {
 
 func loginWithAPIKey(cmd *cobra.Command, ctx *cmdCtx, key string) error {
 	// Validate before writing to disk so a typo doesn't silently leave a broken key.
-	apiClient := api.NewWithOptions(ctx.Env.APIBaseURL, key, api.Options{Debug: debugEnabled()})
+	apiClient := api.NewWithOptions(ctx.Env.APIBaseURL, key, ctx.clientOptions())
 	acc, err := apiClient.Account(cmd.Context())
 	if err != nil {
 		return err

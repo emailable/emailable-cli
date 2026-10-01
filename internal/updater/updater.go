@@ -39,6 +39,10 @@ type cacheEntry struct {
 	LatestVersion string    `json:"latest_version"`
 }
 
+// UserAgent is sent with the release lookup. cmd overrides it with the CLI's
+// versioned User-Agent; the default keeps the request valid for GitHub.
+var UserAgent = "emailable-cli"
+
 // httpClient is a var so tests can swap it for one pointed at an httptest server.
 var httpClient = &http.Client{Timeout: HTTPTimeout}
 
@@ -95,7 +99,7 @@ func fetchLatest(ctx context.Context) (string, bool) {
 		return "", false
 	}
 	// GitHub rejects requests with no User-Agent.
-	req.Header.Set("User-Agent", "emailable-cli-update-check")
+	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
 	resp, err := httpClient.Do(req)

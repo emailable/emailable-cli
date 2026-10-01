@@ -43,6 +43,9 @@ type Client struct {
 	appURL     string
 	clientID   string
 
+	// UserAgent is sent on every request when non-empty.
+	UserAgent string
+
 	// wait is overridable by tests; default is ctx-aware so Ctrl+C during a poll sleep returns immediately.
 	wait func(ctx context.Context, d time.Duration) error
 }
@@ -218,6 +221,9 @@ func (c *Client) formPost(ctx context.Context, path string, form url.Values, op 
 		return nil, fmt.Errorf("oauth: build %s request: %w", op, err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if c.UserAgent != "" {
+		req.Header.Set("User-Agent", c.UserAgent)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
