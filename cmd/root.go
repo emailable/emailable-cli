@@ -253,6 +253,7 @@ func newRootCmd(v string) *cobra.Command {
 	skillSub.GroupID = groupExtras
 
 	root.AddCommand(verify, batch, account, login, logout, status, versionSub, skillSub, newManCmd())
+	wrapArgsTree(root)
 
 	root.CompletionOptions.HiddenDefaultCmd = true
 

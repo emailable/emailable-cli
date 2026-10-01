@@ -28,6 +28,11 @@ func TestUsageErrors_InvalidInput(t *testing.T) {
 		{"--bogus"},
 		{"batch", "get", "--bogus", "bch_1"},
 		{"verify", "--timeout", "abc", "a@x.com"},
+		{"status", "extra"},
+		{"logout", "extra"},
+		{"version", "extra"},
+		{"account", "status", "extra"},
+		{"skill", "print", "extra"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -96,5 +101,28 @@ func TestFlagUsageError_JSONAfterBadFlag(t *testing.T) {
 	assertInvalidInput(t, res)
 	if !jsonOutput {
 		t.Error("expected --json after the bad flag to enable JSON errors")
+	}
+}
+
+func TestFlagUsageError_LastJSONValueWins(t *testing.T) {
+	newTestEnv(t, http.NotFoundHandler())
+	args := []string{"--json", "--bogus", "--json=false"}
+	prev := cliArgs
+	cliArgs = func() []string { return args }
+	t.Cleanup(func() { cliArgs = prev })
+
+	res := runRoot(t, args...)
+	assertInvalidInput(t, res)
+	if jsonOutput {
+		t.Error("expected the trailing --json=false to disable JSON errors")
+	}
+}
+
+func TestLeafArgsError_HonorsJQ(t *testing.T) {
+	newTestEnv(t, http.NotFoundHandler())
+	res := runRoot(t, "status", "extra", "--jq", ".")
+	assertInvalidInput(t, res)
+	if !jsonOutput {
+		t.Error("expected --jq to switch the error to JSON mode")
 	}
 }

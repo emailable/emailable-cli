@@ -16,7 +16,7 @@ func newVerifyCmd() *cobra.Command {
 
   # JSON output for scripts
   emailable verify hello@example.com --json`,
-		Args:         wrapInvalidInputArgs(cobra.ExactArgs(1)),
+		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			email := args[0]

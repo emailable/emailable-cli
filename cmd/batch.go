@@ -36,7 +36,7 @@ func newBatchCmd() *cobra.Command {
 			"once complete. Use `--wait` to poll until completion, or " +
 			"`--partial` to include partial results while still verifying " +
 			"(batches ≤ 1,000 emails only).",
-		Args:         wrapInvalidInputArgs(cobra.ExactArgs(1)),
+		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		Example: `  # Get the latest status / results for a batch
   emailable batch get bch_123
@@ -91,7 +91,7 @@ func newBatchCmd() *cobra.Command {
 		Long: "Verify a batch of emails. Accepts one or more emails or `.csv` / " +
 			"`.json` / `.txt` files. Prints the batch ID; use `--wait` to poll " +
 			"until complete.",
-		Args:         wrapInvalidInputArgs(cobra.MinimumNArgs(1)),
+		Args:         cobra.MinimumNArgs(1),
 		SilenceUsage: true,
 		Example: `  # Verify a CSV file and block until results are ready
   emailable batch verify emails.csv --wait
