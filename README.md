@@ -166,10 +166,6 @@ Resolution order when multiple sources are configured:
 credential source without making a network call — useful for agents
 self-diagnosing a failure. (`emailable account status` is the separate
 network-backed command that fetches the owner email + remaining credits.)
-When the active credential is the one saved by `emailable login` (OAuth or a
-stored API key), it also shows the account email recorded at login. It
-doesn't for a key from `EMAILABLE_API_KEY`, which may belong to a different
-account.
 
 ```bash
 emailable status
@@ -242,30 +238,6 @@ Flags:
 - `--all` — print the full results table inline instead of a summary
 - `-o, --output <file>` — write the results to FILE (`.csv` or `.json`;
   format inferred from extension)
-
-#### Saving results with `-o`
-
-`-o` writes every result row, whatever the batch size:
-
-- Batches over 1,000 emails return a `download_file` link instead of inline
-  results. `-o` downloads that file (a ZIP compressed CSV) and converts it to
-  the format the extension asks for.
-- A batch that is still verifying is an error (exit code `4`) unless you pass
-  `--wait` to block until it finishes or `--partial` to save the rows
-  verified so far.
-- With `--json`, the file is written as JSON whatever its extension.
-
-CSV files have one column per verify response field, always in this order:
-
-```
-email,state,reason,score,domain,user,first_name,last_name,full_name,gender,birth_year,free,role,disposable,accept_all,mailbox_full,no_reply,did_you_mean,mx_record,smtp_provider,tag,duration
-```
-
-A cell is blank when the API omitted the field (for example with
-`--response-fields`) or returned `null`. Any field not in this list is
-appended as an extra column, sorted by name. JSON files keep the API's
-batch payload, with the `emails` array filled in from the download for
-large batches.
 
 ### Account
 
@@ -373,7 +345,7 @@ through verbatim.
 | `not_authenticated` | Missing or invalid credentials (HTTP 401)        |
 | `forbidden`         | Authenticated but not allowed (HTTP 403)         |
 | `not_found`         | Unknown resource (HTTP 404)                      |
-| `invalid_input`     | Bad request / validation failure (HTTP 400, 422), or a CLI usage error (unknown command or flag, bad flag value, conflicting flags) |
+| `invalid_input`     | Bad request or CLI usage error (HTTP 400, 422)   |
 | `rate_limited`      | Throttled by the server (HTTP 429)               |
 | `try_again`         | Verification is still processing (HTTP 249)      |
 | `server_error`      | Server-side failure (HTTP 5xx)                   |
