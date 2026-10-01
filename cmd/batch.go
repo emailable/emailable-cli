@@ -274,6 +274,7 @@ func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonM
 		}
 	}
 
+poll:
 	for {
 		// partial=false: stays in "processing" shape until the whole batch finishes,
 		// giving reliable counts. partial=true would signal done as soon as any result
@@ -316,7 +317,19 @@ func waitForCompletion(ctx context.Context, client *api.Client, id string, jsonM
 				}
 				next, nerr := client.Batch(ctx, id, false)
 				if nerr != nil {
-					break
+					// Same failure budget as the main poll: a temporary error
+					// goes back around rather than returning the count-only
+					// shape as if it were the final result.
+					failures++
+					if !isTemporaryPollError(nerr) || failures >= maxPollFailures {
+						stopUI()
+						return nil, nerr
+					}
+					if serr := retrySleep(ctx, pollFailureDelay(failures)); serr != nil {
+						stopUI()
+						return nil, serr
+					}
+					continue poll
 				}
 				s = next
 			}

@@ -262,6 +262,32 @@ func TestWaitForCompletion_RetriesTemporaryErrors(t *testing.T) {
 	}
 }
 
+// TestWaitForCompletion_CanonicalFetchRetriesTemporaryErrors: when the counts
+// say done but the follow-up fetch for the completed payload fails, --wait must
+// keep trying instead of returning the count-only shape with no emails.
+func TestWaitForCompletion_CanonicalFetchRetriesTemporaryErrors(t *testing.T) {
+	var calls int32
+	client := batchClient(t, func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		switch {
+		case n == 1:
+			writeJSON(w, map[string]any{"id": "bch_c", "total": 2, "processed": 2})
+		case n <= 4:
+			writeJSONError(w, http.StatusServiceUnavailable, "", "unavailable")
+		default:
+			writeJSON(w, completedBatchPayload("bch_c"))
+		}
+	})
+
+	s, err := waitForCompletion(context.Background(), client, "bch_c", true, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("waitForCompletion: %v", err)
+	}
+	if len(s.Emails) != 2 {
+		t.Errorf("expected the completed payload with emails, got %+v", s)
+	}
+}
+
 func TestWaitForCompletion_GivesUpAfterConsecutiveFailures(t *testing.T) {
 	var calls int32
 	client := batchClient(t, func(w http.ResponseWriter, r *http.Request) {
