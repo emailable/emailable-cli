@@ -194,7 +194,8 @@ parameter; omitted flags use the server's default):
 Submit a batch verification job. Each input is either a literal email address,
 a CSV or JSON file, or a plain-text file with one address per line. For CSV
 and JSON inputs, the email column/key must be named `email` (case-insensitive);
-otherwise pass `--field <name>` to point at the right one.
+otherwise pass `--field <name>`, or a dotted path like `contacts.email` for
+nested JSON.
 
 #### Start a batch
 
@@ -210,8 +211,8 @@ cat emails.txt | emailable batch verify -
 
 Flags:
 
-- `--field <name>` — CSV column or JSON key holding the email
-  (default `email`)
+- `--field <name>` — CSV column or dotted JSON path (e.g. `contacts.email`)
+  holding the email (default `email`)
 - `--wait` — poll until the batch completes and print results inline
 - `--all` — with `--wait`, print the full results table instead of a summary
 - `-o, --output <file>` — with `--wait`, write the results to FILE

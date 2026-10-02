@@ -147,7 +147,7 @@ func newBatchCmd() *cobra.Command {
 			return f.Print(submit)
 		},
 	}
-	verify.Flags().String("field", "", "CSV column or JSON key `<name>` holding the email (defaults to email)")
+	verify.Flags().String("field", "", "CSV column or dotted JSON path `<name>` holding the email, e.g. contacts.email (defaults to email)")
 	verify.Flags().Bool("wait", false, "Poll until the batch completes")
 	verify.Flags().StringP("output", "o", "", "Write results to FILE (.csv or .json; format inferred from extension)")
 	verify.Flags().Bool("all", false, "Print the full results table inline instead of a summary")
