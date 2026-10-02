@@ -1,0 +1,32 @@
+name: Live
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: Live API (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # Secrets aren't passed to pull requests from forks, so the tests skip
+      # themselves when the key is empty.
+      EMAILABLE_LIVE_API_KEY: ${{ secrets.EMAILABLE_LIVE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: make test-live
