@@ -23,7 +23,7 @@ func newLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "login",
 		Short:        "Log in to your Emailable account",
-		Args:         wrapInvalidInputArgs(cobra.NoArgs),
+		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		Example: `  # Interactive OAuth device login
   emailable login

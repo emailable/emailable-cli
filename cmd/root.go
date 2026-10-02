@@ -218,6 +218,10 @@ func newRootCmd(v string) *cobra.Command {
 		},
 	}
 	root.SetVersionTemplate("{{ .Version }}\n")
+	// Both are inherited by every subcommand, so bad flags and unknown
+	// commands exit 4 / invalid_input like other bad input.
+	root.SetFlagErrorFunc(flagUsageError)
+	root.Args = unknownSubcommand
 
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Return JSON response")
 	root.PersistentFlags().StringVar(&jqExpr, "jq", "", "Filter JSON output with a jq `expression` (implies --json)")
@@ -251,6 +255,7 @@ func newRootCmd(v string) *cobra.Command {
 	skillSub.GroupID = groupExtras
 
 	root.AddCommand(verify, batch, account, login, logout, status, versionSub, skillSub, newManCmd())
+	wrapArgsTree(root)
 
 	root.CompletionOptions.HiddenDefaultCmd = true
 

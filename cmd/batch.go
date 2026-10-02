@@ -20,6 +20,8 @@ func newBatchCmd() *cobra.Command {
 	batch := &cobra.Command{
 		Use:          "batch",
 		Short:        "Verify a batch of emails",
+		Args:         unknownSubcommand,
+		RunE:         showHelp,
 		SilenceUsage: true,
 		Example: `  # Submit a batch and wait for completion
   emailable batch verify emails.csv --wait
@@ -36,7 +38,7 @@ func newBatchCmd() *cobra.Command {
 			"once complete. Use `--wait` to poll until completion, or " +
 			"`--partial` to include partial results while still verifying " +
 			"(batches ≤ 1,000 emails only).",
-		Args:         wrapInvalidInputArgs(cobra.ExactArgs(1)),
+		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		Example: `  # Get the latest status / results for a batch
   emailable batch get bch_123
@@ -52,6 +54,9 @@ func newBatchCmd() *cobra.Command {
 			partial, _ := cmd.Flags().GetBool("partial")
 			outPath, _ := cmd.Flags().GetString("output")
 			showAll, _ := cmd.Flags().GetBool("all")
+			if wait && partial {
+				return NewInvalidInput("--wait and --partial can't be combined: --wait already polls until completion")
+			}
 
 			cctx, err := newCmdCtxFor(cmd, jsonOutput)
 			if err != nil {
@@ -63,9 +68,6 @@ func newBatchCmd() *cobra.Command {
 			}
 
 			if wait {
-				if partial {
-					return fmt.Errorf("--wait and --partial can't be combined: --wait already polls until completion")
-				}
 				s, err := waitForCompletion(cmd.Context(), client, id, cctx.JSONMode || cctx.Quiet, cmd.ErrOrStderr())
 				if err != nil {
 					return err
@@ -91,7 +93,7 @@ func newBatchCmd() *cobra.Command {
 		Long: "Verify a batch of emails. Accepts one or more emails or `.csv` / " +
 			"`.json` / `.txt` files. Prints the batch ID; use `--wait` to poll " +
 			"until complete.",
-		Args:         wrapInvalidInputArgs(cobra.MinimumNArgs(1)),
+		Args:         cobra.MinimumNArgs(1),
 		SilenceUsage: true,
 		Example: `  # Verify a CSV file and block until results are ready
   emailable batch verify emails.csv --wait
@@ -359,12 +361,56 @@ func saveToFile(cmd *cobra.Command, cctx *cmdCtx, v any, path string) error {
 	if err != nil {
 		return err
 	}
+	return reportSaved(cmd, cctx, n, path)
+}
+
+func reportSaved(cmd *cobra.Command, cctx *cmdCtx, n int, path string) error {
 	if !cctx.JSONMode {
 		h := &output.Human{W: cmd.ErrOrStderr(), Quiet: cctx.Quiet}
 		msg := savedMessage(n, path)
 		return h.Success(msg)
 	}
 	return nil
+}
+
+// saveBatchToFile refuses to write a header-only file for a batch whose rows
+// aren't available, and fetches the results file for large batches.
+func saveBatchToFile(cmd *cobra.Command, cctx *cmdCtx, status *api.BatchStatus, batchID, path string) error {
+	// Only `batch get` has --partial; the lookup fails (false) elsewhere.
+	partial, _ := cmd.Flags().GetBool("partial")
+	if !status.IsComplete() && !partial {
+		if processed, total, ok := status.Progress(); ok {
+			return NewInvalidInputf("batch %s is still verifying (%d/%d); use --wait or --partial", batchID, processed, total)
+		}
+		return NewInvalidInputf("batch %s is still verifying; use --wait or --partial", batchID)
+	}
+	if status.DownloadFile != "" {
+		return saveDownloadToFile(cmd, cctx, status, path)
+	}
+	if _, total, ok := status.Progress(); ok && total > 0 && status.IsComplete() && len(status.Emails) == 0 {
+		return fmt.Errorf("batch %s returned no per-email results to save", batchID)
+	}
+	return saveToFile(cmd, cctx, status, path)
+}
+
+func saveDownloadToFile(cmd *cobra.Command, cctx *cmdCtx, status *api.BatchStatus, path string) error {
+	sp := ui.NewTo(cmd.ErrOrStderr(), "Downloading results")
+	if !cctx.JSONMode && !cctx.Quiet {
+		sp.Start()
+	}
+	d, err := api.FetchDownload(cmd.Context(), status.DownloadFile, nil)
+	sp.Stop()
+	if err != nil {
+		return err
+	}
+	n, err := output.WriteDownload(d, status, output.SaveOptions{
+		Path:      path,
+		ForceJSON: cctx.JSONMode,
+	})
+	if err != nil {
+		return err
+	}
+	return reportSaved(cmd, cctx, n, path)
 }
 
 func savedMessage(n int, path string) string {
@@ -380,12 +426,19 @@ func savedMessage(n int, path string) string {
 
 func renderBatchOutcome(cmd *cobra.Command, cctx *cmdCtx, status *api.BatchStatus, batchID, outPath string, showAll bool) error {
 	if outPath != "" {
-		return saveToFile(cmd, cctx, status, outPath)
+		return saveBatchToFile(cmd, cctx, status, batchID, outPath)
 	}
 	if cctx.JSONMode {
 		return newOutput(cmd.OutOrStdout(), true).Print(status)
 	}
-	if status.DownloadFile != "" || len(status.Emails) == 0 {
+	if status.DownloadFile != "" {
+		if err := newOutput(cmd.OutOrStdout(), false).Print(status); err != nil {
+			return err
+		}
+		h := &output.Human{W: cmd.OutOrStdout(), Quiet: cctx.Quiet}
+		return h.Hint(fmt.Sprintf("Run `emailable batch get %s -o results.csv` to save it.", batchID))
+	}
+	if len(status.Emails) == 0 {
 		return newOutput(cmd.OutOrStdout(), false).Print(status)
 	}
 

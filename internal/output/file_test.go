@@ -1,8 +1,11 @@
 package output
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,18 +54,117 @@ func TestWriteResults_BatchCSV(t *testing.T) {
 	if len(rows) != 4 { // header + 3
 		t.Fatalf("got %d rows, want 4", len(rows))
 	}
-	if rows[0][0] != "email" || rows[0][1] != "state" || rows[0][2] != "score" {
+	if strings.Join(rows[0], ",") != strings.Join(CSVColumns, ",") {
 		t.Errorf("unexpected header: %v", rows[0])
 	}
-	if rows[1][0] != "a@x.com" || rows[1][1] != "deliverable" || rows[1][2] != "100" {
+	col := columnIndex(rows[0])
+	if rows[1][col["email"]] != "a@x.com" || rows[1][col["state"]] != "deliverable" || rows[1][col["score"]] != "100" {
 		t.Errorf("unexpected row 1: %v", rows[1])
 	}
 	// Booleans render as true/false strings.
-	if rows[1][8] != "true" { // free
-		t.Errorf("expected free=true, got %q", rows[1][8])
+	if rows[1][col["free"]] != "true" {
+		t.Errorf("expected free=true, got %q", rows[1][col["free"]])
 	}
-	if rows[2][5] != "true" { // disposable
-		t.Errorf("expected disposable=true, got %q", rows[2][5])
+	if rows[2][col["disposable"]] != "true" {
+		t.Errorf("expected disposable=true, got %q", rows[2][col["disposable"]])
+	}
+}
+
+func columnIndex(header []string) map[string]int {
+	m := make(map[string]int, len(header))
+	for i, h := range header {
+		m[h] = i
+	}
+	return m
+}
+
+// fetchViaAPI runs body through the real API client so the result carries
+// its raw JSON, as it does in the CLI.
+func fetchViaAPI(t *testing.T, body string) (*api.BatchStatus, *api.VerifyResult) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	c := api.New(srv.URL, "k", nil)
+	b, err := c.Batch(context.Background(), "bch_1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := c.Verify(context.Background(), "a@x.com", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b, v
+}
+
+func readCSV(t *testing.T, path string) [][]string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := csv.NewReader(strings.NewReader(string(data))).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
+}
+
+func TestWriteResults_CSVBlankForAbsentAndNull(t *testing.T) {
+	// As with --response-fields email,state,free: other fields are absent.
+	b, _ := fetchViaAPI(t, `{"id":"bch_1","emails":[
+		{"email":"a@x.com","state":"deliverable","free":false,"score":0,"tag":null,"duration":0.25},
+		{"email":"b@y.com","state":"risky"}
+	]}`)
+	path := filepath.Join(t.TempDir(), "out.csv")
+	n, err := WriteResults(b, SaveOptions{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("count: got %d want 2", n)
+	}
+	rows := readCSV(t, path)
+	col := columnIndex(rows[0])
+	cases := []struct {
+		row       int
+		col, want string
+	}{
+		{1, "free", "false"},
+		{1, "score", "0"},
+		{1, "tag", ""},
+		{1, "duration", "0.25"},
+		{1, "disposable", ""},
+		{2, "free", ""},
+		{2, "score", ""},
+		{2, "state", "risky"},
+	}
+	for _, tc := range cases {
+		if got := rows[tc.row][col[tc.col]]; got != tc.want {
+			t.Errorf("row %d %s: got %q want %q", tc.row, tc.col, got, tc.want)
+		}
+	}
+}
+
+func TestWriteResults_CSVAppendsUnknownKeysSorted(t *testing.T) {
+	_, v := fetchViaAPI(t, `{"email":"a@x.com","state":"deliverable","zeta":"z","alpha":{"k":1}}`)
+	path := filepath.Join(t.TempDir(), "one.csv")
+	if _, err := WriteResults(v, SaveOptions{Path: path}); err != nil {
+		t.Fatal(err)
+	}
+	rows := readCSV(t, path)
+	want := append(append([]string(nil), CSVColumns...), "alpha", "zeta")
+	if strings.Join(rows[0], ",") != strings.Join(want, ",") {
+		t.Fatalf("header: got %v want %v", rows[0], want)
+	}
+	col := columnIndex(rows[0])
+	if got := rows[1][col["alpha"]]; got != `{"k":1}` {
+		t.Errorf("alpha: got %q", got)
+	}
+	if got := rows[1][col["zeta"]]; got != "z" {
+		t.Errorf("zeta: got %q", got)
 	}
 }
 

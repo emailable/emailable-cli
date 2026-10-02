@@ -346,7 +346,7 @@ through verbatim.
 | `not_authenticated` | Missing or invalid credentials (HTTP 401)        |
 | `forbidden`         | Authenticated but not allowed (HTTP 403)         |
 | `not_found`         | Unknown resource (HTTP 404)                      |
-| `invalid_input`     | Bad request / validation failure (HTTP 400, 422) |
+| `invalid_input`     | Bad request or CLI usage error (HTTP 400, 422)   |
 | `rate_limited`      | Throttled by the server (HTTP 429)               |
 | `try_again`         | Verification is still processing (HTTP 249)      |
 | `server_error`      | Server-side failure (HTTP 5xx)                   |
