@@ -153,8 +153,8 @@ emailable login --api-key live_xxx...
 ```
 
 With `--json`, `login` prints `{"logged_in": true, "auth_source": ..., "owner_email": ...}`
-on stdout. During the OAuth flow the verification code and URL still go to
-stderr.
+on stdout; `owner_email` is omitted when the account can't be looked up.
+During the OAuth flow the verification code and URL still go to stderr.
 
 After saving, every subsequent command uses the stored key with no env
 var or flag needed. Run `emailable logout` to remove it.
