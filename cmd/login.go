@@ -28,14 +28,14 @@ func newLoginCmd() *cobra.Command {
 		Example: `  # Interactive OAuth device login
   emailable login
 
-  # Save an API key non-interactively
-  emailable login --api-key sk_live_xxx
-
   # Pipe an API key from a secret manager
-  op read "op://Personal/Emailable/api_key" | emailable login`,
+  op read "op://Personal/Emailable/api_key" | emailable login --api-key -
+
+  # Pass an API key directly (lands in shell history)
+  emailable login --api-key live_xxx`,
 		RunE: runLoginE,
 	}
-	cmd.Flags().StringVar(&apiKey, "api-key", "", "Save an API key as your credential (or pipe the key to stdin)")
+	cmd.Flags().StringVar(&apiKey, "api-key", "", "API `key` to save as your credential (\"-\" reads it from stdin)")
 	return cmd
 }
 
@@ -45,9 +45,15 @@ func runLoginE(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// EMAILABLE_API_KEY is not consulted here — it's for per-invocation use;
-	// login is an explicit persistence action requiring flag or stdin pipe.
-	if key, ok := apiKeyForLogin(); ok {
+	// EMAILABLE_API_KEY is not consulted here: it's for per-invocation use,
+	// and login is an explicit persistence action requiring --api-key.
+	// Changed, not a non-empty value: `--api-key "$UNSET_VAR"` must fail as
+	// invalid input rather than silently fall through to the browser flow.
+	if cmd.Flags().Changed("api-key") {
+		key, err := apiKeyForLogin(cmd.InOrStdin(), apiKey)
+		if err != nil {
+			return err
+		}
 		return loginWithAPIKey(cmd, ctx, key)
 	}
 
@@ -74,8 +80,11 @@ func runLoginE(cmd *cobra.Command, _ []string) error {
 	_ = hStderr.Notice(fmt.Sprintf("Verification code: `%s`", dc.UserCode))
 	_ = hStderr.Notice(fmt.Sprintf("If it doesn't open, visit `%s`", openURL))
 
+	// The spinner is human chrome; JSON and quiet callers don't get it.
 	sp := ui.New("Waiting for authorization")
-	sp.Start()
+	if !jsonOutput && !ctx.Quiet {
+		sp.Start()
+	}
 	tok, err := client.PollToken(cmd.Context(), dc)
 	sp.Stop()
 	if err != nil {
@@ -103,33 +112,64 @@ func runLoginE(cmd *cobra.Command, _ []string) error {
 	// degrades the success message, it doesn't undo the login.
 	apiClient := api.NewWithOptions(ctx.Env.APIBaseURL, creds.AccessToken, ctx.clientOptions())
 	acc, accErr := apiClient.Account(cmd.Context())
-	h := &output.Human{W: cmd.OutOrStdout(), Quiet: ctx.Quiet}
+	ownerEmail := ""
 	if accErr == nil && acc != nil {
+		ownerEmail = acc.OwnerEmail
 		creds.OwnerEmail = acc.OwnerEmail
 		if saveErr := creds.Save(ctx.CredentialsPath); saveErr != nil {
-			noticeW := &output.Human{W: cmd.ErrOrStderr(), Quiet: ctx.Quiet}
-			_ = noticeW.Notice(fmt.Sprintf("Couldn't update owner_email in credentials: %v", saveErr))
+			_ = hStderr.Notice(fmt.Sprintf("Couldn't update owner_email in credentials: %v", saveErr))
 		}
-		return h.Success(fmt.Sprintf("Logged in as %s", acc.OwnerEmail))
+	}
+
+	if jsonOutput {
+		return printLoginJSON(cmd, apiKeySourceOAuth, ownerEmail)
+	}
+	h := &output.Human{W: cmd.OutOrStdout(), Quiet: ctx.Quiet}
+	if ownerEmail != "" {
+		return h.Success(fmt.Sprintf("Logged in as %s", ownerEmail))
 	}
 	return h.Success("Logged in.")
 }
 
-func apiKeyForLogin() (string, bool) {
-	if apiKey != "" {
-		return strings.TrimSpace(apiKey), true
-	}
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return "", false
+// stdinIsTerminal is overridable in tests, which can't easily fake a TTY.
+var stdinIsTerminal = func(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
+
+// apiKeyForLogin resolves the --api-key flag value. Stdin is read only for
+// an explicit `-`, so a pipe that never closes can't hang a plain `login`.
+func apiKeyForLogin(stdin io.Reader, flag string) (string, error) {
+	if flag != "-" {
+		key := strings.TrimSpace(flag)
+		if key == "" {
+			return "", NewInvalidInput("--api-key is empty; pass a key, or `-` to read it from stdin")
 		}
-		key := strings.TrimSpace(string(data))
-		if key != "" {
-			return key, true
-		}
+		return key, nil
 	}
-	return "", false
+	if stdinIsTerminal(stdin) {
+		return "", NewInvalidInput("`--api-key -` reads the key from stdin, but stdin is a terminal; pipe the key in")
+	}
+	data, err := io.ReadAll(stdin)
+	if err != nil {
+		return "", fmt.Errorf("read API key from stdin: %w", err)
+	}
+	key := strings.TrimSpace(string(data))
+	if key == "" {
+		return "", NewInvalidInput("`--api-key -` read an empty API key from stdin")
+	}
+	return key, nil
+}
+
+func printLoginJSON(cmd *cobra.Command, source apiKeySource, ownerEmail string) error {
+	payload := map[string]any{
+		"logged_in":   true,
+		"auth_source": string(source),
+	}
+	if ownerEmail != "" {
+		payload["owner_email"] = ownerEmail
+	}
+	return newJSON(cmd.OutOrStdout()).Print(payload)
 }
 
 func loginWithAPIKey(cmd *cobra.Command, ctx *cmdCtx, key string) error {
@@ -154,6 +194,13 @@ func loginWithAPIKey(cmd *cobra.Command, ctx *cmdCtx, key string) error {
 		return err
 	}
 
+	if jsonOutput {
+		ownerEmail := ""
+		if acc != nil {
+			ownerEmail = acc.OwnerEmail
+		}
+		return printLoginJSON(cmd, apiKeySourceStored, ownerEmail)
+	}
 	h := &output.Human{W: cmd.OutOrStdout(), Quiet: ctx.Quiet}
 	if acc != nil && acc.OwnerEmail != "" {
 		return h.Success(fmt.Sprintf("Logged in as %s (API key)", acc.OwnerEmail))
@@ -161,19 +208,28 @@ func loginWithAPIKey(cmd *cobra.Command, ctx *cmdCtx, key string) error {
 	return h.Success("Logged in with API key.")
 }
 
-func openBrowser(url string) error {
-	var c *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		c = exec.Command("open", url)
-	case "linux", "freebsd", "openbsd", "netbsd":
-		c = exec.Command("xdg-open", url)
-	case "windows":
-		// Empty title arg is required so URLs containing & aren't parsed as
-		// the window title by cmd's start builtin.
-		c = exec.Command("cmd", "/c", "start", "", url)
-	default:
-		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+// openBrowser is a var so tests can stub it instead of launching a browser.
+var openBrowser = func(url string) error {
+	c, err := browserCommand(runtime.GOOS, url)
+	if err != nil {
+		return err
 	}
 	return c.Start()
+}
+
+// browserCommand builds the command that opens url on goos, split out so
+// tests can check every platform's arguments without launching anything.
+func browserCommand(goos, url string) (*exec.Cmd, error) {
+	switch goos {
+	case "darwin":
+		return exec.Command("open", url), nil
+	case "linux", "freebsd", "openbsd", "netbsd":
+		return exec.Command("xdg-open", url), nil
+	case "windows":
+		// Not `cmd /c start`: cmd.exe splits an unquoted & in the URL into a
+		// second command. rundll32 receives the URL as a plain argument.
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url), nil
+	default:
+		return nil, fmt.Errorf("unsupported platform: %s", goos)
+	}
 }

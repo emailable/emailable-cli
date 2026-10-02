@@ -21,7 +21,10 @@ Before running any command:
    - have the user run `emailable login` to complete the OAuth browser flow,
      or
    - have them export `EMAILABLE_API_KEY=...` (preferred for non-interactive
-     contexts).
+     contexts), or
+   - save a key from a secret manager with
+     `op read "op://..." | emailable login --api-key -`. Plain
+     `emailable login` never reads stdin.
 
 ## Verify a single address
 

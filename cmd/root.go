@@ -56,7 +56,7 @@ func newJSON(w io.Writer) *output.JSON {
 // apiKey is the value of the `login --api-key` local flag. It is deliberately
 // NOT a persistent root flag: credentials on argv would leak into shell history
 // and `ps` output, so a key only comes via EMAILABLE_API_KEY, stored config, or
-// `login` (flag or stdin pipe).
+// `login --api-key` (a value, or `-` to read stdin).
 var apiKey string
 
 // debugMode is the value of the persistent --debug flag. When true (or when
