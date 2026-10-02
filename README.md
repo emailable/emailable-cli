@@ -563,6 +563,8 @@ Common targets:
 
 - `make build` — compile to `bin/emailable`
 - `make test` — run tests with race detector and coverage
+- `make test-live` — run the built binary against the real API; requires
+  `EMAILABLE_LIVE_API_KEY` set to a test key (`test_...`)
 - `make fmt` — format with `gofmt`
 - `make lint` — run `golangci-lint`
 - `make release VERSION=x.y.z` — bump `plugin.json`, commit, and tag `vx.y.z`
