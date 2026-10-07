@@ -1,14 +1,10 @@
 # <img src="assets/emailable-icon.svg" height="28" alt="Emailable"> Emailable CLI
 
-[![Latest Release](https://img.shields.io/github/v/release/emailable/emailable-cli?include_prereleases)](https://github.com/emailable/emailable-cli/releases)
+[![Latest Release](https://img.shields.io/github/v/release/emailable/emailable-cli)](https://github.com/emailable/emailable-cli/releases)
 ![Build Status](https://github.com/emailable/emailable-cli/actions/workflows/ci.yml/badge.svg)
 
 This is the official CLI to work with [Emailable](https://emailable.com) from
 the command line.
-
-> [!WARNING]
-> This is prerelease software and is not yet considered production ready.
-> Commands, flags, and output may change without notice between releases.
 
 ## Documentation
 
