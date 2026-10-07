@@ -361,7 +361,7 @@ through verbatim.
 | `not_authenticated` | Missing or invalid credentials (HTTP 401)        |
 | `forbidden`         | Authenticated but not allowed (HTTP 403)         |
 | `not_found`         | Unknown resource (HTTP 404)                      |
-| `invalid_input`     | Bad request / validation failure (HTTP 400, 422) |
+| `invalid_input`     | Bad request or CLI usage error (HTTP 400, 422)   |
 | `rate_limited`      | Throttled by the server (HTTP 429)               |
 | `try_again`         | Verification is still processing (HTTP 249)      |
 | `server_error`      | Server-side failure (HTTP 5xx)                   |
@@ -419,9 +419,8 @@ EMAILABLE_DEBUG=1 emailable verify hello@example.com
 
 ### Quiet mode
 
-Pass `--quiet` (or `-q`) to suppress non-error human output — success
-lines, hints, notices, progress bars and spinners. Errors still print, and
-`--json` output is unaffected (quiet is a human-mode-only modifier).
+Pass `--quiet` (or `-q`) to suppress hints, progress, and status messages.
+Results and errors still print, and `--json` output is unaffected.
 Mirrors the convention in `curl`, `docker`, and `gh`.
 
 ```bash

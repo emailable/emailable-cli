@@ -434,3 +434,29 @@ func TestHuman_QuietDefaultIsLoud(t *testing.T) {
 		t.Errorf("expected chrome line in non-quiet mode, got %q", buf.String())
 	}
 }
+
+// TestPrintBatchSummary_LargeBatchCounts: without inline rows the verified
+// count comes from progress (top-level or total_counts) and the breakdown
+// from total_counts when present.
+func TestPrintBatchSummary_LargeBatchCounts(t *testing.T) {
+	cases := []struct {
+		name string
+		s    *api.BatchStatus
+		want string
+	}{
+		{"top-level counts", &api.BatchStatus{Total: 5000, Processed: 5000, DownloadFile: "https://x/y"}, "Verified 5000 emails\n"},
+		{"total_counts", &api.BatchStatus{DownloadFile: "https://x/y", TotalCounts: &api.BatchTotalCounts{Total: 3, Processed: 3, Deliverable: 2, Risky: 1}}, "Verified 3 emails: 2 Deliverable, 1 Risky\n"},
+		{"duplicates excluded", &api.BatchStatus{DownloadFile: "https://x/y", TotalCounts: &api.BatchTotalCounts{Total: 15, Processed: 15, Deliverable: 2, Undeliverable: 3, Risky: 1, Unknown: 4, Duplicate: 5}}, "Verified 10 emails: 2 Deliverable, 3 Undeliverable, 1 Risky, 4 Unknown (5 duplicates skipped)\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := (&Human{W: &buf}).PrintBatchSummary(c.s); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(buf.String(), c.want) {
+				t.Errorf("got %q, want suffix %q", buf.String(), c.want)
+			}
+		})
+	}
+}

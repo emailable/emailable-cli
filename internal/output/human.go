@@ -93,10 +93,7 @@ func (h *Human) Print(v any) error {
 			return h.PrintBatchResults(x.Emails)
 		}
 		if x.DownloadFile != "" {
-			if err := h.Success("Batch complete"); err != nil {
-				return err
-			}
-			return h.Hint(fmt.Sprintf("Too many results to display inline — download from:\n  `%s`", x.DownloadFile))
+			return h.PrintBatchSummary(x)
 		}
 		return h.PrintBatchStatus(x)
 	case api.BatchStatus:
@@ -421,6 +418,25 @@ func (h *Human) PrintBatchSummary(s *api.BatchStatus) error {
 	for _, e := range s.Emails {
 		counts[e.State]++
 	}
+	verified := len(s.Emails)
+	// Large batches return counts instead of inline rows: the verified count
+	// comes from progress, and the state breakdown from total_counts.
+	if verified == 0 {
+		if processed, _, ok := s.Progress(); ok {
+			verified = processed
+		}
+		if tc := s.TotalCounts; tc != nil {
+			// The server's processed count includes duplicates, which
+			// aren't verified and have no state.
+			verified = max(verified-tc.Duplicate, 0)
+			counts = map[string]int{
+				"deliverable":   tc.Deliverable,
+				"undeliverable": tc.Undeliverable,
+				"risky":         tc.Risky,
+				"unknown":       tc.Unknown,
+			}
+		}
+	}
 
 	var parts []string
 	for _, state := range []string{"deliverable", "undeliverable", "risky", "unknown"} {
@@ -440,10 +456,17 @@ func (h *Human) PrintBatchSummary(s *api.BatchStatus) error {
 	if len(parts) > 0 {
 		tail = ": " + strings.Join(parts, ", ")
 	}
+	if tc := s.TotalCounts; tc != nil && tc.Duplicate > 0 {
+		note := fmt.Sprintf("(%d duplicates skipped)", tc.Duplicate)
+		if tc.Duplicate == 1 {
+			note = "(1 duplicate skipped)"
+		}
+		tail += " " + stf(lipgloss.NewStyle().Foreground(lipgloss.Color("241"))).Render(note)
+	}
 
 	if s.IsComplete() {
 		check := stf(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)).Render("✓")
-		_, err := fmt.Fprintf(h.W, "%s Verified %d emails%s\n", check, len(s.Emails), tail)
+		_, err := fmt.Fprintf(h.W, "%s Verified %d emails%s\n", check, verified, tail)
 		return err
 	}
 

@@ -9,6 +9,8 @@ func newAccountCmd() *cobra.Command {
 	account := &cobra.Command{
 		Use:          "account",
 		Short:        "Manage your Emailable account",
+		Args:         unknownSubcommand,
+		RunE:         showHelp,
 		SilenceUsage: true,
 		Example: `  # Show the owner email and remaining credits
   emailable account status`,
@@ -36,6 +38,11 @@ func newAccountCmd() *cobra.Command {
 			a, err := client.Account(cmd.Context())
 			if err != nil {
 				return err
+			}
+			// JSON prints the response itself so its raw body passes through
+			// with any fields AccountView doesn't model.
+			if jsonOutput {
+				return newOutput(cmd.OutOrStdout(), true).Print(a)
 			}
 			view := &output.AccountView{
 				OwnerEmail:       a.OwnerEmail,
