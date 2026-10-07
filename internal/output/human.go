@@ -419,16 +419,20 @@ func (h *Human) PrintBatchSummary(s *api.BatchStatus) error {
 		counts[e.State]++
 	}
 	verified := len(s.Emails)
-	// Large batches return per-state totals instead of inline rows.
-	if verified == 0 && s.TotalCounts != nil {
-		tc := s.TotalCounts
-		counts = map[string]int{
-			"deliverable":   tc.Deliverable,
-			"undeliverable": tc.Undeliverable,
-			"risky":         tc.Risky,
-			"unknown":       tc.Unknown,
+	// Large batches return counts instead of inline rows: the verified count
+	// comes from progress, and the state breakdown from total_counts.
+	if verified == 0 {
+		if processed, _, ok := s.Progress(); ok {
+			verified = processed
 		}
-		verified = tc.Processed
+		if tc := s.TotalCounts; tc != nil {
+			counts = map[string]int{
+				"deliverable":   tc.Deliverable,
+				"undeliverable": tc.Undeliverable,
+				"risky":         tc.Risky,
+				"unknown":       tc.Unknown,
+			}
+		}
 	}
 
 	var parts []string

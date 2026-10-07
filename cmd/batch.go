@@ -387,6 +387,9 @@ func saveBatchToFile(cmd *cobra.Command, cctx *cmdCtx, status *api.BatchStatus, 
 	if status.DownloadFile != "" {
 		return saveDownloadToFile(cmd, cctx, status, path)
 	}
+	if !status.IsComplete() && len(status.Emails) == 0 {
+		return NewInvalidInputf("batch %s has no verified emails yet; try again shortly or use --wait", batchID)
+	}
 	if _, total, ok := status.Progress(); ok && total > 0 && status.IsComplete() && len(status.Emails) == 0 {
 		return fmt.Errorf("batch %s returned no per-email results to save", batchID)
 	}

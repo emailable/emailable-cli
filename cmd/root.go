@@ -226,7 +226,7 @@ func newRootCmd(v string) *cobra.Command {
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Return JSON response")
 	root.PersistentFlags().StringVar(&jqExpr, "jq", "", "Filter JSON output with a jq `expression` (implies --json)")
 	root.PersistentFlags().BoolVar(&debugMode, "debug", false, "Dump HTTP requests/responses to stderr (also EMAILABLE_DEBUG)")
-	root.PersistentFlags().BoolVarP(&quietMode, "quiet", "q", false, "Suppress non-error human output (success lines, hints, progress)")
+	root.PersistentFlags().BoolVarP(&quietMode, "quiet", "q", false, "Suppress hints, progress, and status messages")
 
 	root.AddGroup(
 		&cobra.Group{ID: groupCore, Title: "CORE COMMANDS"},

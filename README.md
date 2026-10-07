@@ -409,9 +409,8 @@ EMAILABLE_DEBUG=1 emailable verify hello@example.com
 
 ### Quiet mode
 
-Pass `--quiet` (or `-q`) to suppress non-error human output — success
-lines, hints, notices, progress bars and spinners. Errors still print, and
-`--json` output is unaffected (quiet is a human-mode-only modifier).
+Pass `--quiet` (or `-q`) to suppress hints, progress, and status messages.
+Results and errors still print, and `--json` output is unaffected.
 Mirrors the convention in `curl`, `docker`, and `gh`.
 
 ```bash

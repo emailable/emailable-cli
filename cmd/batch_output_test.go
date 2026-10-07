@@ -63,6 +63,28 @@ func TestBatchGet_OutputPartial(t *testing.T) {
 	}
 }
 
+// TestBatchGet_OutputPartialNoRowsYet: a queued batch has nothing to save, so
+// --partial -o must not write a header-only file.
+func TestBatchGet_OutputPartialNoRowsYet(t *testing.T) {
+	env := newTestEnv(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"id":           "bch_1",
+			"message":      "Your batch is being processed.",
+			"total_counts": map[string]int{"processed": 0, "total": 4},
+		})
+	}))
+	env.seedAPIKey(t, "sk_test_xxx")
+	out := filepath.Join(t.TempDir(), "results.csv")
+
+	res := runRoot(t, "batch", "get", "bch_1", "--partial", "-o", out)
+	if got := errorCode(res.Err); got != codeInvalidInput {
+		t.Fatalf("errorCode: got %q want %q (err: %v)", got, codeInvalidInput, res.Err)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Errorf("expected no file to be written, stat err: %v", err)
+	}
+}
+
 func TestBatchGet_OutputDownloadFile(t *testing.T) {
 	var zbuf bytes.Buffer
 	zw := zip.NewWriter(&zbuf)
