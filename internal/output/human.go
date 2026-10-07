@@ -426,6 +426,9 @@ func (h *Human) PrintBatchSummary(s *api.BatchStatus) error {
 			verified = processed
 		}
 		if tc := s.TotalCounts; tc != nil {
+			// The server's processed count includes duplicates, which
+			// aren't verified and have no state.
+			verified = max(verified-tc.Duplicate, 0)
 			counts = map[string]int{
 				"deliverable":   tc.Deliverable,
 				"undeliverable": tc.Undeliverable,
@@ -452,6 +455,13 @@ func (h *Human) PrintBatchSummary(s *api.BatchStatus) error {
 	tail := ""
 	if len(parts) > 0 {
 		tail = ": " + strings.Join(parts, ", ")
+	}
+	if tc := s.TotalCounts; tc != nil && tc.Duplicate > 0 {
+		note := fmt.Sprintf("(%d duplicates skipped)", tc.Duplicate)
+		if tc.Duplicate == 1 {
+			note = "(1 duplicate skipped)"
+		}
+		tail += " " + stf(lipgloss.NewStyle().Foreground(lipgloss.Color("241"))).Render(note)
 	}
 
 	if s.IsComplete() {
