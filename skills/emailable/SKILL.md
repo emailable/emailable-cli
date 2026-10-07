@@ -21,7 +21,10 @@ Before running any command:
    - have the user run `emailable login` to complete the OAuth browser flow,
      or
    - have them export `EMAILABLE_API_KEY=...` (preferred for non-interactive
-     contexts).
+     contexts), or
+   - save a key from a secret manager with
+     `op read "op://..." | emailable login --api-key -`. Plain
+     `emailable login` never reads stdin.
 
 ## Verify a single address
 
@@ -42,9 +45,10 @@ Parse the response by reading `state` (`deliverable`, `undeliverable`,
 ## Batch verification
 
 Each positional arg can be a literal address, a CSV/JSON file
-(the email column defaults to `email`; override with `--field <name>`),
-or a plain-text file with one address per line. Pass `-` to read
-newline-separated addresses from stdin.
+(the email column defaults to `email`; override with `--field <name>`,
+or a dotted path like `contacts.email` for nested JSON), or a plain-text
+file with one address per line. Pass `-` to read newline-separated
+addresses from stdin.
 
 ```bash
 emailable batch verify emails.csv --field email --wait --json

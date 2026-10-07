@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"regexp"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/emailable/emailable-cli/internal/env"
@@ -54,7 +56,7 @@ func newJSON(w io.Writer) *output.JSON {
 // apiKey is the value of the `login --api-key` local flag. It is deliberately
 // NOT a persistent root flag: credentials on argv would leak into shell history
 // and `ps` output, so a key only comes via EMAILABLE_API_KEY, stored config, or
-// `login` (flag or stdin pipe).
+// `login --api-key` (a value, or `-` to read stdin).
 var apiKey string
 
 // debugMode is the value of the persistent --debug flag. When true (or when
@@ -276,9 +278,22 @@ func resetRootFlagState() {
 	quietMode = false
 }
 
+// interruptGrace bounds how long a command may take to unwind after Ctrl-C
+// before Execute force-exits, so a read blocked on stdin can't hang the process.
+const interruptGrace = 3 * time.Second
+
 // Execute runs the root command.
 func Execute() {
+	updater.UserAgent = userAgent()
 	root := newRootCmd(version)
+
+	// Ctrl-C / SIGTERM cancel cmd.Context() so in-flight requests and --wait
+	// polls unwind through the normal error path (and report a batch id).
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	finished := make(chan struct{})
+	defer close(finished)
+	go forceExitAfterInterrupt(sigCtx, stop, finished)
 
 	// Uses IsTerminal (not IsTTY) so NO_COLOR doesn't suppress update checks.
 	preSkip := updater.ShouldSkip(updater.Conditions{
@@ -297,7 +312,7 @@ func Execute() {
 		}()
 	}
 
-	runErr := root.Execute()
+	runErr := root.ExecuteContext(sigCtx)
 
 	skip := preSkip
 	if skip == updater.SkipNone {
@@ -312,28 +327,55 @@ func Execute() {
 
 	if runErr != nil {
 		renderError(root.ErrOrStderr(), runErr, jsonOutput)
-		if skip == updater.SkipNone {
-			waitAndNotify(root.ErrOrStderr(), resultCh, updCancel, updateNoticeWait)
+		// After Ctrl-C the user wants out; don't hold the exit for the notice.
+		if skip == updater.SkipNone && sigCtx.Err() == nil {
+			waitAndNotify(sigCtx.Done(), root.ErrOrStderr(), resultCh, updCancel, updateNoticeWait)
 		}
 		os.Exit(exitCode(runErr))
 	}
 
-	if skip != updater.SkipNone {
+	// A command that finished despite Ctrl-C (e.g. login already saved the
+	// credentials) still exits 0, but the notice wait is skipped so the exit
+	// is immediate.
+	if skip != updater.SkipNone || sigCtx.Err() != nil {
 		return
 	}
-	waitAndNotify(root.ErrOrStderr(), resultCh, updCancel, updateNoticeWait)
+	waitAndNotify(sigCtx.Done(), root.ErrOrStderr(), resultCh, updCancel, updateNoticeWait)
+}
+
+// forceExitAfterInterrupt waits for a signal, then restores default signal
+// handling (so a second Ctrl-C kills immediately) and exits 130 if the command
+// hasn't finished within interruptGrace.
+func forceExitAfterInterrupt(sigCtx context.Context, stop context.CancelFunc, finished <-chan struct{}) {
+	select {
+	case <-finished:
+		return
+	case <-sigCtx.Done():
+	}
+	stop()
+	timer := time.NewTimer(interruptGrace)
+	defer timer.Stop()
+	select {
+	case <-finished:
+	case <-timer.C:
+		os.Exit(exitInterrupted)
+	}
 }
 
 // updateNoticeWait caps how long Execute blocks for the update check. 1s matches the spec.
 const updateNoticeWait = 1 * time.Second
 
-func waitAndNotify(w io.Writer, resultCh <-chan updater.Result, updCancel context.CancelFunc, wait time.Duration) {
+// waitAndNotify gives up early when interrupted closes, so Ctrl-C during the
+// wait exits at once.
+func waitAndNotify(interrupted <-chan struct{}, w io.Writer, resultCh <-chan updater.Result, updCancel context.CancelFunc, wait time.Duration) {
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case r := <-resultCh:
 		_ = updater.MaybeNotify(w, r, ui.IsTTY(w))
 	case <-timer.C:
+		updCancel()
+	case <-interrupted:
 		updCancel()
 	}
 }

@@ -3,8 +3,11 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // TestMan_GeneratesPages runs `emailable man --output DIR` and asserts the
@@ -47,6 +50,75 @@ func TestMan_GeneratesPages(t *testing.T) {
 		if !found {
 			t.Errorf("expected a man page starting with %q, have %v", p, have)
 		}
+	}
+}
+
+// TestMan_GoreleaserCaskManpages asserts the hand-maintained
+// `homebrew_casks[].manpages` list in .goreleaser.yaml matches the pages
+// `emailable man` generates. Casks don't accept globs, so a command added
+// without updating that list would ship without its page on Homebrew.
+func TestMan_GoreleaserCaskManpages(t *testing.T) {
+	dir := t.TempDir()
+	res := runRoot(t, "man", "--output", dir)
+	if res.Err != nil {
+		t.Fatalf("execute: %v\nstderr: %s", res.Err, res.Stderr.String())
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	generated := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		generated["man/"+e.Name()] = true
+	}
+
+	data, err := os.ReadFile("../.goreleaser.yaml")
+	if err != nil {
+		t.Fatalf("read .goreleaser.yaml: %v", err)
+	}
+	var cfg struct {
+		HomebrewCasks []struct {
+			Name     string   `yaml:"name"`
+			Manpages []string `yaml:"manpages"`
+		} `yaml:"homebrew_casks"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parse .goreleaser.yaml: %v", err)
+	}
+	if len(cfg.HomebrewCasks) == 0 {
+		t.Fatal("expected at least one homebrew_casks entry in .goreleaser.yaml")
+	}
+
+	for _, cask := range cfg.HomebrewCasks {
+		listed := make(map[string]bool, len(cask.Manpages))
+		for _, p := range cask.Manpages {
+			listed[p] = true
+		}
+		var missing, extra []string
+		for p := range generated {
+			if !listed[p] {
+				missing = append(missing, p)
+			}
+		}
+		for p := range listed {
+			if !generated[p] {
+				extra = append(extra, p)
+			}
+		}
+		if len(missing) == 0 && len(extra) == 0 {
+			continue
+		}
+		slices.Sort(missing)
+		slices.Sort(extra)
+		var b strings.Builder
+		b.WriteString("homebrew cask " + cask.Name + " manpages in .goreleaser.yaml are out of sync with `emailable man`:\n")
+		for _, p := range missing {
+			b.WriteString("  + " + p + " (generated, not listed)\n")
+		}
+		for _, p := range extra {
+			b.WriteString("  - " + p + " (listed, not generated)\n")
+		}
+		t.Error(b.String())
 	}
 }
 

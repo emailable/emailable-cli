@@ -97,7 +97,7 @@ changelog:
   use: github-native
 
 release:
-  draft: true
+  draft: false
   prerelease: auto
 
 homebrew_casks:
@@ -113,8 +113,9 @@ homebrew_casks:
     homepage: "https://emailable.com"
     description: "Official command-line interface for the Emailable API"
     skip_upload: auto
-    # Globs aren't supported — list each page explicitly. Regenerate this
-    # list when a top-level command is added or removed.
+    # Globs aren't supported, so list each page explicitly. Regenerate this
+    # list when a command is added or removed; `TestMan_GoreleaserCaskManpages`
+    # in cmd/man_test.go fails when it drifts from `emailable man`.
     manpages:
       - man/emailable.1
       - man/emailable-account.1

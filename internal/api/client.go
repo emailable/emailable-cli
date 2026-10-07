@@ -31,6 +31,14 @@ type Options struct {
 	Debug      bool
 	DebugOut   io.Writer // nil => os.Stderr
 	MaxRetries int       // 0 => defaultMaxRetries; negative => disable retry
+	UserAgent  string    // sent on every request; empty => Go's default
+
+	// OnUnauthorized, when set, is called at most once per request after a 401.
+	// It returns a fresh bearer token, and the request is retried with it.
+	OnUnauthorized func(ctx context.Context) (string, error)
+
+	// Sleep waits between retries; nil => a ctx-aware timer. Overridable by tests.
+	Sleep func(ctx context.Context, d time.Duration) error
 }
 
 // Client talks to the Emailable v1 API.
@@ -41,6 +49,10 @@ type Client struct {
 	debug       bool
 	debugOut    io.Writer
 	maxRetries  int
+	userAgent   string
+
+	onUnauthorized func(ctx context.Context) (string, error)
+	sleep          func(ctx context.Context, d time.Duration) error
 }
 
 // New returns a Client for baseURL authenticated with accessToken.
@@ -64,6 +76,10 @@ func NewWithOptions(baseURL, accessToken string, opts Options) *Client {
 	} else if maxRetries < 0 {
 		maxRetries = 0
 	}
+	sleep := opts.Sleep
+	if sleep == nil {
+		sleep = defaultSleep
+	}
 	return &Client{
 		httpClient:  hc,
 		baseURL:     baseURL,
@@ -71,6 +87,21 @@ func NewWithOptions(baseURL, accessToken string, opts Options) *Client {
 		debug:       opts.Debug,
 		debugOut:    debugOut,
 		maxRetries:  maxRetries,
+		userAgent:   opts.UserAgent,
+
+		onUnauthorized: opts.OnUnauthorized,
+		sleep:          sleep,
+	}
+}
+
+func defaultSleep(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
@@ -79,6 +110,12 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	if len(query) > 0 {
 		fullURL += "?" + query.Encode()
 	}
+
+	// Only GETs retry 5xx and transport failures. A POST /batch that failed
+	// mid-flight may already have been accepted, and resubmitting it would
+	// spend credits twice.
+	idempotent := method == http.MethodGet
+	reauthed := false
 
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
@@ -95,25 +132,30 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 		req.Header.Set("Authorization", "Bearer "+c.accessToken)
 		req.Header.Set("Accept", "application/json")
+		if c.userAgent != "" {
+			req.Header.Set("User-Agent", c.userAgent)
+		}
 		if len(form) > 0 {
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		}
 
 		c.dumpRequest(req)
 
-		resp, err := c.httpClient.Do(req)
+		respBody, resp, err := c.roundTrip(req)
 		if err != nil {
-			return fmt.Errorf("http: %w", err)
-		}
-
-		respBody, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			return fmt.Errorf("read response: %w", err)
+			// A canceled ctx surfaces here as a transport error; never retry it.
+			if !idempotent || ctx.Err() != nil || attempt == c.maxRetries {
+				return err
+			}
+			lastErr = err
+			if serr := c.sleep(ctx, backoffFor(nil, attempt, time.Now())); serr != nil {
+				return serr
+			}
+			continue
 		}
 		c.dumpResponse(resp, respBody)
 
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 && !isRetryableStatus(resp.StatusCode) {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 && !isRetryableStatus(method, resp.StatusCode) {
 			if out == nil {
 				return nil
 			}
@@ -134,21 +176,58 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 		lastErr = apiErr
 
-		if !isRetryableStatus(resp.StatusCode) || attempt == c.maxRetries {
+		// A 401 means the server rejected the token before doing any work, so
+		// retrying with a fresh one is safe for every method. It doesn't spend
+		// the retry budget.
+		if resp.StatusCode == http.StatusUnauthorized && c.onUnauthorized != nil && !reauthed {
+			reauthed = true
+			tok, err := c.onUnauthorized(ctx)
+			if err != nil {
+				return err
+			}
+			c.accessToken = tok
+			attempt--
+			continue
+		}
+
+		if !isRetryableStatus(method, resp.StatusCode) || attempt == c.maxRetries {
 			return apiErr
 		}
-		sleep := backoffFor(apiErr.RateLimit, attempt, time.Now())
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(sleep):
+		if err := c.sleep(ctx, backoffFor(apiErr.RateLimit, attempt, time.Now())); err != nil {
+			return err
 		}
 	}
 	return lastErr
 }
 
-func isRetryableStatus(status int) bool {
-	return status == 249 || status == http.StatusTooManyRequests
+// roundTrip sends req and reads the whole body, so a connection dropped
+// mid-body is reported (and retried) like any other transport failure.
+func (c *Client) roundTrip(req *http.Request) ([]byte, *http.Response, error) {
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("http: %w", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		// Wrapped as *url.Error like a failed Do, so a connection dropped
+		// mid-body still classifies as a network failure.
+		return nil, nil, fmt.Errorf("read response: %w", &url.Error{Op: req.Method, URL: req.URL.String(), Err: err})
+	}
+	return body, resp, nil
+}
+
+// isRetryableStatus reports whether status is transient. 249 and 429 retry
+// for every method because the server did no work; 5xx retries only for GET.
+func isRetryableStatus(method string, status int) bool {
+	switch status {
+	case 249, http.StatusTooManyRequests:
+		return true
+	case http.StatusInternalServerError, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return method == http.MethodGet
+	}
+	return false
 }
 
 func backoffFor(rl *RateLimit, attempt int, now time.Time) time.Duration {

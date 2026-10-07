@@ -138,18 +138,23 @@ EMAILABLE_API_KEY=live_xxx... emailable account status
 ```
 
 **Saved** (preferred for personal machines): `emailable login` accepts an
-API key via stdin pipe or via the login-local `--api-key` flag. The key is
-validated against `/v1/account` before being written to
-`~/.config/emailable/credentials.json`, and supersedes any prior OAuth
-credentials.
+API key via the login-local `--api-key` flag. Pass `--api-key -` to read
+the key from stdin; without `--api-key`, `login` never reads stdin and
+always starts the OAuth flow. The key is validated against `/v1/account`
+before being written to `~/.config/emailable/credentials.json`, and
+supersedes any prior OAuth credentials.
 
 ```bash
 # Pipe from a password manager / secret store (key stays out of shell history)
-op read "op://Vault/Emailable/api-key" | emailable login
+op read "op://Vault/Emailable/api-key" | emailable login --api-key -
 
-# Or pass directly (lands in shell history — avoid for shared machines)
+# Or pass directly (lands in shell history, so avoid on shared machines)
 emailable login --api-key live_xxx...
 ```
+
+With `--json`, `login` prints `{"logged_in": true, "auth_source": ..., "owner_email": ...}`
+on stdout; `owner_email` is omitted when the account can't be looked up.
+During the OAuth flow the verification code and URL still go to stderr.
 
 After saving, every subsequent command uses the stored key with no env
 var or flag needed. Run `emailable logout` to remove it.
@@ -194,7 +199,8 @@ parameter; omitted flags use the server's default):
 Submit a batch verification job. Each input is either a literal email address,
 a CSV or JSON file, or a plain-text file with one address per line. For CSV
 and JSON inputs, the email column/key must be named `email` (case-insensitive);
-otherwise pass `--field <name>` to point at the right one.
+otherwise pass `--field <name>`, or a dotted path like `contacts.email` for
+nested JSON.
 
 #### Start a batch
 
@@ -210,8 +216,8 @@ cat emails.txt | emailable batch verify -
 
 Flags:
 
-- `--field <name>` — CSV column or JSON key holding the email
-  (default `email`)
+- `--field <name>` — CSV column or dotted JSON path (e.g. `contacts.email`)
+  holding the email (default `email`)
 - `--wait` — poll until the batch completes and print results inline
 - `--all` — with `--wait`, print the full results table instead of a summary
 - `-o, --output <file>` — with `--wait`, write the results to FILE
@@ -350,6 +356,7 @@ through verbatim.
 | `try_again`         | Verification is still processing (HTTP 249)      |
 | `server_error`      | Server-side failure (HTTP 5xx)                   |
 | `network`           | Connection / DNS / TLS failure                   |
+| `interrupted`       | Canceled by Ctrl-C or `SIGTERM`                  |
 | `unknown`           | Anything else                                    |
 
 #### Exit codes
@@ -362,6 +369,7 @@ through verbatim.
 | `3`  | Retry later (`rate_limited`, `try_again`)      |
 | `4`  | Invalid input or not found (`invalid_input`, `not_found`) |
 | `5`  | Network or server failure (`network`, `server_error`) |
+| `130` | Interrupted (`interrupted`)                   |
 
 #### Transient retry
 
@@ -369,7 +377,24 @@ The HTTP client automatically retries transient responses (up to twice by
 default). For `429`, it honors `RateLimit-Reset` for the backoff window
 (falling back to exponential when the header is absent or stale). For `249`,
 it retries briefly, then surfaces `try_again` with exit code `3` so scripts
-know no verification result was produced.
+know no verification result was produced. Read-only `GET` requests also
+retry `500`, `502`, `503`, `504`, and connection failures. Submitting a batch
+(`POST /batch`) never retries those, so a batch is never submitted twice.
+
+`--wait` keeps polling through temporary failures (network errors, `5xx`,
+`429`, `249`), backing off up to 30 seconds between polls, and gives up after
+8 consecutive failed polls (at least two minutes, longer when each poll's own
+retries are slow). Authentication and not-found
+errors stop it immediately. If `batch verify --wait` fails after the batch was
+submitted, the error includes the batch ID (a `batch_id` field in `--json`
+mode) so you can resume with `emailable batch get <id> --wait`:
+
+```json
+{"message": "dial tcp: connection refused", "code": "network", "batch_id": "5cfc..."}
+```
+
+When an OAuth access token is rejected with `401`, the CLI refreshes it once
+and retries the request.
 
 ### Debug logging
 

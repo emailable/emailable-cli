@@ -551,3 +551,21 @@ func TestRequestDeviceCode_ServerError(t *testing.T) {
 		t.Errorf("expected error to surface the OAuth error code, got %q", err.Error())
 	}
 }
+
+func TestUserAgentHeader(t *testing.T) {
+	var got string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("User-Agent")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-client-id", server.Client())
+	client.UserAgent = "emailable-cli/1.2.3 (linux; amd64)"
+	if err := client.Revoke(context.Background(), "tok"); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	if got != "emailable-cli/1.2.3 (linux; amd64)" {
+		t.Errorf("User-Agent: got %q", got)
+	}
+}

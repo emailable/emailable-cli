@@ -21,7 +21,7 @@ func TestWaitAndNotify_AbandonsSlowCheck(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	waitAndNotify(&buf, resultCh, cancel, 50*time.Millisecond)
+	waitAndNotify(nil, &buf, resultCh, cancel, 50*time.Millisecond)
 	elapsed := time.Since(start)
 
 	if elapsed > 500*time.Millisecond {
@@ -45,7 +45,7 @@ func TestWaitAndNotify_PrintsAvailableUpdate(t *testing.T) {
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	waitAndNotify(&buf, resultCh, cancel, time.Second)
+	waitAndNotify(nil, &buf, resultCh, cancel, time.Second)
 
 	if !strings.Contains(buf.String(), "0.1.0 → 0.2.0") {
 		t.Errorf("expected update notice in output, got %q", buf.String())
@@ -61,7 +61,7 @@ func TestWaitAndNotify_SilentWhenNoUpdate(t *testing.T) {
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	waitAndNotify(&buf, resultCh, cancel, time.Second)
+	waitAndNotify(nil, &buf, resultCh, cancel, time.Second)
 	if buf.Len() != 0 {
 		t.Errorf("expected no output when result is zero, got %q", buf.String())
 	}
@@ -94,5 +94,23 @@ func TestShouldSkip_JSONModeFromRootCmd(t *testing.T) {
 	})
 	if skip != updater.SkipJSON {
 		t.Errorf("ShouldSkip = %v, want SkipJSON", skip)
+	}
+}
+
+// TestWaitAndNotify_InterruptReturnsImmediately: a signal during the notice
+// wait must not hold the exit for the full timeout.
+func TestWaitAndNotify_InterruptReturnsImmediately(t *testing.T) {
+	interrupted := make(chan struct{})
+	close(interrupted)
+	resultCh := make(chan updater.Result)
+	canceled := false
+
+	start := time.Now()
+	waitAndNotify(interrupted, &bytes.Buffer{}, resultCh, func() { canceled = true }, time.Minute)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("waitAndNotify blocked %v after interrupt", elapsed)
+	}
+	if !canceled {
+		t.Error("expected the update check to be canceled")
 	}
 }
