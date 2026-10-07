@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Every run shares the test account's rate limit, so only one run goes at a
+# time. A newer pending run replaces an older pending one.
+concurrency:
+  group: e2e-test-account
+  cancel-in-progress: false
+
 jobs:
   e2e:
     name: E2E (${{ matrix.os }})

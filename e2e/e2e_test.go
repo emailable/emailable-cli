@@ -123,6 +123,10 @@ func execBinary(key string, env []string, args ...string) (result, error) {
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
 		"EMAILABLE_API_KEY="+key,
+		// Always target the real API, even if the developer points the CLI
+		// at a local backend.
+		"EMAILABLE_API_URL=",
+		"EMAILABLE_OAUTH_URL=",
 		"EMAILABLE_NO_UPDATE_NOTIFIER=1",
 		"EMAILABLE_OUTPUT=",
 		"EMAILABLE_DEBUG=",
@@ -417,7 +421,8 @@ func TestBatch_Large(t *testing.T) {
 // returns its row count, excluding the header.
 func downloadedRows(t *testing.T, url string) int {
 	t.Helper()
-	resp, err := http.Get(url)
+	client := &http.Client{Timeout: commandTimeout}
+	resp, err := client.Get(url)
 	if err != nil {
 		t.Fatalf("download: %v", err)
 	}
