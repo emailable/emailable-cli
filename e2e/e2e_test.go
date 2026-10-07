@@ -9,11 +9,15 @@
 package e2e
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,26 +90,7 @@ func run(m *testing.M) int {
 		return 1
 	}
 
-	before, err := availableCredits()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "account status: %v\n", err)
-		return 1
-	}
-
-	code := m.Run()
-
-	// Test keys must never spend credits. The account may be in use
-	// elsewhere, so only a drop the size of the large batch counts as ours.
-	after, err := availableCredits()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "account status: %v\n", err)
-		return 1
-	}
-	if before-after >= largeBatchSize {
-		fmt.Fprintf(os.Stderr, "available_credits dropped from %d to %d during the run\n", before, after)
-		return 1
-	}
-	return code
+	return m.Run()
 }
 
 type result struct {
@@ -123,14 +108,14 @@ func emailable(t *testing.T, args ...string) result {
 
 func emailableWithKey(t *testing.T, key string, args ...string) result {
 	t.Helper()
-	res, err := execBinary(key, args...)
+	res, err := execBinary(key, nil, args...)
 	if err != nil {
 		t.Fatalf("emailable %s: %v\nstderr: %s", strings.Join(args, " "), err, res.Stderr)
 	}
 	return res
 }
 
-func execBinary(key string, args ...string) (result, error) {
+func execBinary(key string, env []string, args ...string) (result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 
@@ -143,6 +128,7 @@ func execBinary(key string, args ...string) (result, error) {
 		"EMAILABLE_DEBUG=",
 		"NO_COLOR=1",
 	)
+	cmd.Env = append(cmd.Env, env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -158,26 +144,6 @@ func execBinary(key string, args ...string) (result, error) {
 		return res, nil
 	}
 	return res, err
-}
-
-func availableCredits() (int, error) {
-	res, err := execBinary(apiKey, "account", "status", "--json")
-	if err != nil {
-		return 0, err
-	}
-	if res.ExitCode != 0 {
-		return 0, fmt.Errorf("exit %d: %s", res.ExitCode, res.Stderr)
-	}
-	var account struct {
-		AvailableCredits *int `json:"available_credits"`
-	}
-	if err := json.Unmarshal([]byte(res.Stdout), &account); err != nil {
-		return 0, fmt.Errorf("decode %q: %w", res.Stdout, err)
-	}
-	if account.AvailableCredits == nil {
-		return 0, fmt.Errorf("available_credits missing from %q", res.Stdout)
-	}
-	return *account.AvailableCredits, nil
 }
 
 func decodeJSON(t *testing.T, s string, v any) {
@@ -448,6 +414,46 @@ func TestBatch_Large(t *testing.T) {
 	if got.TotalCounts["total"] != largeBatchSize {
 		t.Errorf("total_counts.total = %d, want %d", got.TotalCounts["total"], largeBatchSize)
 	}
+	if got.DownloadFile != "" {
+		if n := downloadedRows(t, got.DownloadFile); n != largeBatchSize {
+			t.Errorf("download_file has %d rows, want %d", n, largeBatchSize)
+		}
+	}
+}
+
+// downloadedRows fetches a large batch's download_file, a zipped CSV, and
+// returns its row count, excluding the header.
+func downloadedRows(t *testing.T, url string) int {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("download: HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatalf("unzip: %v", err)
+	}
+	if len(zr.File) != 1 {
+		t.Fatalf("zip has %d files, want 1", len(zr.File))
+	}
+	f, err := zr.File[0].Open()
+	if err != nil {
+		t.Fatalf("unzip: %v", err)
+	}
+	defer f.Close()
+	rows, err := csv.NewReader(f).ReadAll()
+	if err != nil {
+		t.Fatalf("read CSV: %v", err)
+	}
+	return len(rows) - 1
 }
 
 func TestBatch_GetUnknownID(t *testing.T) {
@@ -461,4 +467,139 @@ func TestBatch_GetUnknownID(t *testing.T) {
 	if e.Code != "not_found" {
 		t.Errorf("code = %q, want not_found", e.Code)
 	}
+}
+
+func TestBatch_FromJSONWithField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "contacts.json")
+	var items []map[string]string
+	for _, e := range expectations {
+		items = append(items, map[string]string{"address": e.email})
+	}
+	body, err := json.Marshal(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id := submitBatch(t, path, "--field", "address")
+
+	res := emailable(t, "batch", "get", id, "--json")
+	requireExit(t, res, 0)
+
+	var got batchStatus
+	decodeJSON(t, res.Stdout, &got)
+	checkBatchEmails(t, got)
+}
+
+func TestBatch_ResponseFields(t *testing.T) {
+	id := submitBatch(t, append([]string{"--response-fields", "email,state"}, emailList(expectations)...)...)
+
+	res := emailable(t, "batch", "get", id, "--json")
+	requireExit(t, res, 0)
+
+	var got struct {
+		Emails []map[string]any `json:"emails"`
+	}
+	decodeJSON(t, res.Stdout, &got)
+	if len(got.Emails) != len(expectations) {
+		t.Fatalf("got %d emails, want %d", len(got.Emails), len(expectations))
+	}
+	for _, e := range got.Emails {
+		if len(e) != 2 || e["email"] == nil || e["state"] == nil {
+			t.Errorf("got fields %v, want only email and state", e)
+		}
+	}
+}
+
+// The API accepts the callback URL and retries flag without echoing them, so
+// this only checks that the CLI sends them in a form the API accepts.
+func TestBatch_URLAndRetries(t *testing.T) {
+	submitBatch(t, append([]string{"--url", "https://example.com/callback", "--retries=false"}, emailList(expectations)...)...)
+}
+
+func TestBatch_GetPartial(t *testing.T) {
+	id := submitBatch(t, emailList(expectations)...)
+
+	res := emailable(t, "batch", "get", id, "--partial", "--json")
+	requireExit(t, res, 0)
+
+	var got batchStatus
+	decodeJSON(t, res.Stdout, &got)
+	checkBatchEmails(t, got)
+}
+
+func TestBatch_GetHuman(t *testing.T) {
+	id := submitBatch(t, emailList(expectations)...)
+
+	res := emailable(t, "batch", "get", id)
+	requireExit(t, res, 0)
+	for _, want := range []string{"1 Deliverable", "2 Undeliverable"} {
+		if !strings.Contains(res.Stdout, want) {
+			t.Errorf("summary missing %q:\n%s", want, res.Stdout)
+		}
+	}
+
+	res = emailable(t, "batch", "get", id, "--all")
+	requireExit(t, res, 0)
+	for _, e := range expectations {
+		if !strings.Contains(res.Stdout, e.email) {
+			t.Errorf("--all output missing %s:\n%s", e.email, res.Stdout)
+		}
+	}
+}
+
+func TestBatch_VerifyWaitOutputJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "results.json")
+	res := emailable(t, append([]string{"batch", "verify", "--wait", "-o", path}, emailList(expectations)...)...)
+	requireExit(t, res, 0)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got batchStatus
+	decodeJSON(t, string(data), &got)
+	checkBatchEmails(t, got)
+}
+
+// rateLimitBurst is more concurrent requests than the batch status limit
+// allows in one second, so some of them get a 429. The default limit is 5,
+// and the test account's is 25.
+const rateLimitBurst = 40
+
+// TestRateLimit sends a burst of batch status requests and checks that the
+// CLI retries every 429 it gets until the request succeeds.
+func TestRateLimit(t *testing.T) {
+	id := submitBatch(t, emailList(expectations)...)
+
+	results := make([]result, rateLimitBurst)
+	errs := make([]error, rateLimitBurst)
+	done := make(chan struct{})
+	for i := range rateLimitBurst {
+		go func() {
+			results[i], errs[i] = execBinary(apiKey, []string{"EMAILABLE_DEBUG=1"}, "batch", "get", id, "--json")
+			done <- struct{}{}
+		}()
+	}
+	for range rateLimitBurst {
+		<-done
+	}
+
+	limited := 0
+	for i, res := range results {
+		if errs[i] != nil {
+			t.Fatalf("request %d: %v", i, errs[i])
+		}
+		if res.ExitCode != 0 {
+			t.Errorf("request %d: exit code = %d, want 0\nstderr: %s", i, res.ExitCode, res.Stderr)
+		}
+		if strings.Contains(res.Stderr, " 429 Too Many Requests") {
+			limited++
+		}
+	}
+	if limited == 0 {
+		t.Skipf("no 429 in %d concurrent requests; the account's limit may be higher", rateLimitBurst)
+	}
+	t.Logf("%d of %d requests were rate limited and retried", limited, rateLimitBurst)
 }

@@ -14,8 +14,11 @@ jobs:
     name: E2E (${{ matrix.os }})
     strategy:
       fail-fast: false
+      # The jobs share the test account's rate limit, so running them one at a
+      # time keeps TestRateLimit's bursts from colliding.
+      max-parallel: 1
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
       # Secrets aren't passed to pull requests from forks, so the tests skip
@@ -29,4 +32,4 @@ jobs:
           go-version-file: go.mod
 
       - name: Test
-        run: make test-e2e
+        run: go test -tags e2e -count=1 -v ./e2e
