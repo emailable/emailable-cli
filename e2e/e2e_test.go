@@ -390,15 +390,7 @@ func TestBatch_GetOutputCSV(t *testing.T) {
 
 // Batches over 1,000 emails return a download_file instead of inline emails.
 func TestBatch_Large(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "emails.txt")
-	var b strings.Builder
-	for i := 0; i < largeBatchSize; i++ {
-		fmt.Fprintf(&b, "deliverable+%d@example.com\n", i)
-	}
-	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	id := submitBatch(t, path)
+	id := submitLargeBatch(t)
 
 	res := emailable(t, "batch", "get", id, "--json")
 	requireExit(t, res, 0)
@@ -602,4 +594,53 @@ func TestRateLimit(t *testing.T) {
 		t.Skipf("no 429 in %d concurrent requests; the account's limit may be higher", rateLimitBurst)
 	}
 	t.Logf("%d of %d requests were rate limited and retried", limited, rateLimitBurst)
+}
+
+func submitLargeBatch(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "emails.txt")
+	var b strings.Builder
+	for i := 0; i < largeBatchSize; i++ {
+		fmt.Fprintf(&b, "deliverable+%d@example.com\n", i)
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return submitBatch(t, path)
+}
+
+// A large batch's results only exist in its download_file, so -o has to
+// download them.
+func TestBatch_LargeOutput(t *testing.T) {
+	id := submitLargeBatch(t)
+	dir := t.TempDir()
+
+	csvPath := filepath.Join(dir, "results.csv")
+	res := emailable(t, "batch", "get", id, "-o", csvPath)
+	requireExit(t, res, 0)
+	f, err := os.Open(csvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	rows, err := csv.NewReader(f).ReadAll()
+	if err != nil {
+		t.Fatalf("read CSV: %v", err)
+	}
+	if len(rows)-1 != largeBatchSize {
+		t.Errorf("CSV has %d rows, want %d", len(rows)-1, largeBatchSize)
+	}
+
+	jsonPath := filepath.Join(dir, "results.json")
+	res = emailable(t, "batch", "get", id, "-o", jsonPath)
+	requireExit(t, res, 0)
+	data, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got batchStatus
+	decodeJSON(t, string(data), &got)
+	if len(got.Emails) != largeBatchSize {
+		t.Errorf("JSON has %d emails, want %d", len(got.Emails), largeBatchSize)
+	}
 }
