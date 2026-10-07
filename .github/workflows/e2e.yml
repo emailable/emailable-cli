@@ -1,0 +1,41 @@
+name: E2E
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Every run shares the test account's rate limit, so only one run goes at a
+# time. A newer pending run replaces an older pending one.
+concurrency:
+  group: e2e-test-account
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    name: E2E (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      # The jobs share the test account's rate limit, so running them one at a
+      # time keeps TestRateLimit's bursts from colliding.
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # Secrets aren't passed to pull requests from forks, so the tests skip
+      # themselves when the key is empty.
+      EMAILABLE_TEST_API_KEY: ${{ secrets.EMAILABLE_TEST_API_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test -tags e2e -count=1 -v ./e2e
