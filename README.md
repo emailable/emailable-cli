@@ -84,6 +84,16 @@ curl -fsSL "$base/checksums.txt" | sha256sum -c --ignore-missing
 sudo apk add --allow-untrusted "./emailable_${ver}_linux_$arch.apk"
 ```
 
+**Arch Linux:**
+
+```bash
+ver=<version> arch=amd64
+base="https://github.com/emailable/emailable-cli/releases/download/v$ver"
+curl -fsSLO "$base/emailable_${ver}_linux_$arch.pkg.tar.zst"
+curl -fsSL "$base/checksums.txt" | sha256sum -c --ignore-missing
+sudo pacman -U "./emailable_${ver}_linux_$arch.pkg.tar.zst"
+```
+
 ### From source
 
 ```bash

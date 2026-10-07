@@ -65,6 +65,9 @@ nfpms:
       - deb
       - rpm
       - apk
+      - archlinux
+    archlinux:
+      packager: Emailable <support@emailable.com>
     bindir: /usr/bin
     contents:
       # nfpm expands globs, so this picks up every generated page without a
