@@ -79,3 +79,44 @@ func TestLogout_NoCredentials(t *testing.T) {
 		t.Errorf("expected output to contain 'Logged out.', got %q", out.String())
 	}
 }
+
+// TestLogout_EnvKeyHint: an exported EMAILABLE_API_KEY outlives logout (a
+// process can't unset its parent shell's variables), so logout says so.
+func TestLogout_EnvKeyHint(t *testing.T) {
+	cases := []struct {
+		name   string
+		envKey string
+		args   []string
+		want   string
+		absent string
+	}{
+		{"human with env key", "sk_env", []string{"logout"}, "EMAILABLE_API_KEY is set, so commands still authenticate", ""},
+		{"human without env key", "", []string{"logout"}, "Logged out.", "EMAILABLE_API_KEY"},
+		{"json with env key", "sk_env", []string{"logout", "--json"}, `"api_key_env": true`, ""},
+		{"json without env key", "", []string{"logout", "--json"}, `"logged_out": true`, "api_key_env"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv("EMAILABLE_API_URL", "")
+			t.Setenv("EMAILABLE_OAUTH_URL", "")
+			t.Setenv("EMAILABLE_API_KEY", tc.envKey)
+
+			root := newRootCmd("test")
+			var out bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&out)
+			root.SetArgs(tc.args)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if !strings.Contains(out.String(), tc.want) {
+				t.Errorf("expected %q in output, got %q", tc.want, out.String())
+			}
+			if tc.absent != "" && strings.Contains(out.String(), tc.absent) {
+				t.Errorf("did not expect %q in output, got %q", tc.absent, out.String())
+			}
+		})
+	}
+}
