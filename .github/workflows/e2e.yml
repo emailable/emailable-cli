@@ -1,4 +1,4 @@
-name: Live
+name: E2E
 
 on:
   push:
@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  live:
-    name: Live API (${{ matrix.os }})
+  e2e:
+    name: E2E (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -20,7 +20,7 @@ jobs:
     env:
       # Secrets aren't passed to pull requests from forks, so the tests skip
       # themselves when the key is empty.
-      EMAILABLE_LIVE_API_KEY: ${{ secrets.EMAILABLE_LIVE_API_KEY }}
+      EMAILABLE_TEST_API_KEY: ${{ secrets.EMAILABLE_TEST_API_KEY }}
     steps:
       - uses: actions/checkout@v6
 
@@ -29,4 +29,4 @@ jobs:
           go-version-file: go.mod
 
       - name: Test
-        run: make test-live
+        run: make test-e2e

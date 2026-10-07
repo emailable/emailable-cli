@@ -1,4 +1,4 @@
-.PHONY: build test test-live fmt lint clean run release release-snapshot man
+.PHONY: build test test-e2e fmt lint clean run release release-snapshot man
 
 BINARY := emailable
 PKG    := .
@@ -10,10 +10,10 @@ build:
 test:
 	go test -race -coverprofile=coverage.txt ./...
 
-# Runs the built binary against the real API. Requires EMAILABLE_LIVE_API_KEY
+# Runs the built binary against the real API. Requires EMAILABLE_TEST_API_KEY
 # set to a test key (test_...), which spends no credits.
-test-live:
-	go test -tags live -count=1 -v ./e2e
+test-e2e:
+	go test -tags e2e -count=1 -v ./e2e
 
 fmt:
 	gofmt -w .

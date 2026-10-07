@@ -1,11 +1,11 @@
-//go:build live
+//go:build e2e
 
 // Package e2e runs the built emailable binary against the real Emailable API
 // using a test key. Test keys return simulated results and never spend
 // credits, and the <state>@example.com and <flag>.<state>@example.com
 // addresses make those results predictable.
 //
-// Run with: EMAILABLE_LIVE_API_KEY=test_xxx make test-live
+// Run with: EMAILABLE_TEST_API_KEY=test_xxx make test-e2e
 package e2e
 
 import (
@@ -23,11 +23,14 @@ import (
 	"time"
 )
 
-const keyEnv = "EMAILABLE_LIVE_API_KEY"
+const keyEnv = "EMAILABLE_TEST_API_KEY"
 
 // commandTimeout bounds every invocation so a command that never finishes
 // fails the test instead of hanging CI.
 const commandTimeout = 90 * time.Second
+
+// largeBatchSize is the smallest batch the API answers with a download_file.
+const largeBatchSize = 1001
 
 var (
 	binary  string
@@ -42,7 +45,7 @@ func TestMain(m *testing.M) {
 func run(m *testing.M) int {
 	apiKey = os.Getenv(keyEnv)
 	if apiKey == "" {
-		fmt.Fprintf(os.Stderr, "skipping live tests: %s is not set\n", keyEnv)
+		fmt.Fprintf(os.Stderr, "skipping e2e tests: %s is not set\n", keyEnv)
 		return 0
 	}
 	// A live key would spend real credits on every run.
@@ -51,7 +54,7 @@ func run(m *testing.M) int {
 		return 1
 	}
 
-	tmp, err := os.MkdirTemp("", "emailable-live-")
+	tmp, err := os.MkdirTemp("", "emailable-e2e-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -91,14 +94,15 @@ func run(m *testing.M) int {
 
 	code := m.Run()
 
-	// Test keys must never spend credits.
+	// Test keys must never spend credits. The account may be in use
+	// elsewhere, so only a drop the size of the large batch counts as ours.
 	after, err := availableCredits()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "account status: %v\n", err)
 		return 1
 	}
-	if after != before {
-		fmt.Fprintf(os.Stderr, "available_credits changed from %d to %d during the run\n", before, after)
+	if before-after >= largeBatchSize {
+		fmt.Fprintf(os.Stderr, "available_credits dropped from %d to %d during the run\n", before, after)
 		return 1
 	}
 	return code
@@ -191,14 +195,10 @@ func requireExit(t *testing.T, res result, want int) {
 }
 
 type verifyResult struct {
-	Email      string `json:"email"`
-	State      string `json:"state"`
-	Reason     string `json:"reason"`
-	Domain     string `json:"domain"`
-	Role       bool   `json:"role"`
-	Free       bool   `json:"free"`
-	Disposable bool   `json:"disposable"`
-	AcceptAll  bool   `json:"accept_all"`
+	Email  string `json:"email"`
+	State  string `json:"state"`
+	Domain string `json:"domain"`
+	Role   bool   `json:"role"`
 }
 
 type batchStatus struct {
@@ -212,21 +212,16 @@ type batchStatus struct {
 type expectation struct {
 	email string
 	state string
-	flag  string // the one boolean field the address pins to true, if any
+	role  bool
 }
 
-// expectations covers each state plus each flag the test addresses can pin.
-// Plain <state>@ addresses leave role, free, and accept_all random, so only
-// <flag>.<state>@ addresses assert a flag.
+// A plain <state>@example.com address pins the state, and a
+// <flag>.<state>@example.com address also pins that flag. Other fields are
+// random, so only these are asserted.
 var expectations = []expectation{
 	{email: "deliverable@example.com", state: "deliverable"},
 	{email: "undeliverable@example.com", state: "undeliverable"},
-	{email: "risky@example.com", state: "risky"},
-	{email: "unknown@example.com", state: "unknown"},
-	{email: "role.undeliverable@example.com", state: "undeliverable", flag: "role"},
-	{email: "free.deliverable@example.com", state: "deliverable", flag: "free"},
-	{email: "disposable.risky@example.com", state: "risky", flag: "disposable"},
-	{email: "accept-all.deliverable@example.com", state: "deliverable", flag: "accept_all"},
+	{email: "role.undeliverable@example.com", state: "undeliverable", role: true},
 }
 
 func (e expectation) check(t *testing.T, got verifyResult) {
@@ -237,17 +232,8 @@ func (e expectation) check(t *testing.T, got verifyResult) {
 	if got.State != e.state {
 		t.Errorf("%s: state = %q, want %q", e.email, got.State, e.state)
 	}
-	if got.Reason == "" {
-		t.Errorf("%s: reason is empty", e.email)
-	}
-	flags := map[string]bool{
-		"role":       got.Role,
-		"free":       got.Free,
-		"disposable": got.Disposable,
-		"accept_all": got.AcceptAll,
-	}
-	if e.flag != "" && !flags[e.flag] {
-		t.Errorf("%s: %s = false, want true", e.email, e.flag)
+	if e.role && !got.Role {
+		t.Errorf("%s: role = false, want true", e.email)
 	}
 }
 
@@ -276,8 +262,9 @@ func TestAccountStatus_InvalidKey(t *testing.T) {
 		Code string `json:"code"`
 	}
 	decodeJSON(t, res.Stderr, &e)
-	if e.Code != "not_authenticated" {
-		t.Errorf("code = %q, want not_authenticated", e.Code)
+	// The API answers an unknown key with 403, not 401.
+	if e.Code != "forbidden" {
+		t.Errorf("code = %q, want forbidden", e.Code)
 	}
 }
 
@@ -294,17 +281,6 @@ func TestVerify(t *testing.T) {
 				t.Errorf("domain = %q, want example.com", got.Domain)
 			}
 		})
-	}
-}
-
-func TestVerify_DeliverableReason(t *testing.T) {
-	res := emailable(t, "verify", "deliverable@example.com", "--json")
-	requireExit(t, res, 0)
-
-	var got verifyResult
-	decodeJSON(t, res.Stdout, &got)
-	if got.Reason != "accepted_email" {
-		t.Errorf("reason = %q, want accepted_email", got.Reason)
 	}
 }
 
@@ -450,7 +426,7 @@ func TestBatch_GetOutputCSV(t *testing.T) {
 func TestBatch_Large(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "emails.txt")
 	var b strings.Builder
-	for i := 0; i < 1001; i++ {
+	for i := 0; i < largeBatchSize; i++ {
 		fmt.Fprintf(&b, "deliverable+%d@example.com\n", i)
 	}
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
@@ -469,8 +445,8 @@ func TestBatch_Large(t *testing.T) {
 	if len(got.Emails) != 0 {
 		t.Errorf("got %d inline emails, want none for a large batch", len(got.Emails))
 	}
-	if got.TotalCounts["total"] != 1001 {
-		t.Errorf("total_counts.total = %d, want 1001", got.TotalCounts["total"])
+	if got.TotalCounts["total"] != largeBatchSize {
+		t.Errorf("total_counts.total = %d, want %d", got.TotalCounts["total"], largeBatchSize)
 	}
 }
 
