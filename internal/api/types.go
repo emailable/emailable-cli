@@ -51,8 +51,12 @@ type BatchSubmit struct {
 
 // BatchTotalCounts holds aggregate progress counts from a partial batch response.
 type BatchTotalCounts struct {
-	Total     int `json:"total"`
-	Processed int `json:"processed"`
+	Total         int `json:"total"`
+	Processed     int `json:"processed"`
+	Deliverable   int `json:"deliverable"`
+	Undeliverable int `json:"undeliverable"`
+	Risky         int `json:"risky"`
+	Unknown       int `json:"unknown"`
 }
 
 // BatchStatus merges three API payload shapes: in-progress (Total/Processed),

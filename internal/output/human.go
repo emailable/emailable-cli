@@ -93,10 +93,7 @@ func (h *Human) Print(v any) error {
 			return h.PrintBatchResults(x.Emails)
 		}
 		if x.DownloadFile != "" {
-			if err := h.Success("Batch complete"); err != nil {
-				return err
-			}
-			return h.Hint(fmt.Sprintf("Too many results to display inline — download from:\n  `%s`", x.DownloadFile))
+			return h.PrintBatchSummary(x)
 		}
 		return h.PrintBatchStatus(x)
 	case api.BatchStatus:
@@ -421,6 +418,18 @@ func (h *Human) PrintBatchSummary(s *api.BatchStatus) error {
 	for _, e := range s.Emails {
 		counts[e.State]++
 	}
+	verified := len(s.Emails)
+	// Large batches return per-state totals instead of inline rows.
+	if verified == 0 && s.TotalCounts != nil {
+		tc := s.TotalCounts
+		counts = map[string]int{
+			"deliverable":   tc.Deliverable,
+			"undeliverable": tc.Undeliverable,
+			"risky":         tc.Risky,
+			"unknown":       tc.Unknown,
+		}
+		verified = tc.Processed
+	}
 
 	var parts []string
 	for _, state := range []string{"deliverable", "undeliverable", "risky", "unknown"} {
@@ -443,7 +452,7 @@ func (h *Human) PrintBatchSummary(s *api.BatchStatus) error {
 
 	if s.IsComplete() {
 		check := stf(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)).Render("✓")
-		_, err := fmt.Fprintf(h.W, "%s Verified %d emails%s\n", check, len(s.Emails), tail)
+		_, err := fmt.Fprintf(h.W, "%s Verified %d emails%s\n", check, verified, tail)
 		return err
 	}
 

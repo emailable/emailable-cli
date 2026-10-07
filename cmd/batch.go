@@ -436,7 +436,7 @@ func renderBatchOutcome(cmd *cobra.Command, cctx *cmdCtx, status *api.BatchStatu
 			return err
 		}
 		h := &output.Human{W: cmd.OutOrStdout(), Quiet: cctx.Quiet}
-		return h.Hint(fmt.Sprintf("Run `emailable batch get %s -o results.csv` to save it.", batchID))
+		return h.Hint(fmt.Sprintf("Run `emailable batch get %s -o results.csv` to save the results.", batchID))
 	}
 	if len(status.Emails) == 0 {
 		return newOutput(cmd.OutOrStdout(), false).Print(status)

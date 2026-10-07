@@ -454,13 +454,24 @@ func TestRenderBatchOutcome_DownloadFile(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&bytes.Buffer{})
 
-	status := &api.BatchStatus{ID: "bch_big", DownloadFile: "https://files.example/big.csv"}
+	status := &api.BatchStatus{
+		ID:           "bch_big",
+		DownloadFile: "https://files.example/big.csv",
+		TotalCounts:  &api.BatchTotalCounts{Total: 3, Processed: 3, Deliverable: 2, Unknown: 1},
+	}
 	cctx := &cmdCtx{JSONMode: false}
 	if err := renderBatchOutcome(cmd, cctx, status, "bch_big", "", false); err != nil {
 		t.Fatalf("renderBatchOutcome: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "big.csv") {
-		t.Errorf("expected download URL in output, got %q", stdout.String())
+	out := stdout.String()
+	if !strings.Contains(out, "Verified 3 emails: 2 Deliverable, 1 Unknown") {
+		t.Errorf("expected a summary from total_counts, got %q", out)
+	}
+	if !strings.Contains(out, "batch get bch_big -o results.csv") {
+		t.Errorf("expected the -o hint, got %q", out)
+	}
+	if strings.Contains(out, "big.csv") {
+		t.Errorf("the presigned URL should stay out of human output, got %q", out)
 	}
 }
 
