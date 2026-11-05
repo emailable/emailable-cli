@@ -143,8 +143,8 @@ scoops:
     repository:
       owner: emailable
       name: scoop-bucket
-      # Same PAT as the Homebrew cask above; needs `contents:write` on both
-      # the homebrew-tap and scoop-bucket repos.
+      # Same token as the Homebrew cask above, from the emailable-release
+      # GitHub App installed on homebrew-tap and scoop-bucket.
       token: "{{ .Env.RELEASE_GITHUB_TOKEN }}"
     homepage: https://emailable.com
     description: Official command-line interface for the Emailable API.
