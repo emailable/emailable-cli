@@ -30,6 +30,7 @@ jobs:
     name: GoReleaser
     needs: verify-version
     runs-on: ubuntu-24.04
+    environment: release
     steps:
       - name: Checkout
         uses: actions/checkout@v6
